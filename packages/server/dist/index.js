@@ -1,5 +1,5 @@
 // src/index.ts
-import { Hono as Hono5 } from "hono";
+import { Hono as Hono6 } from "hono";
 
 // src/routes/products.ts
 import { Hono } from "hono";
@@ -54,433 +54,443 @@ function createProductRoutes(db) {
 
 // src/routes/admin.ts
 import { Hono as Hono2 } from "hono";
-import { formatPrice } from "@tillkit/core";
-var adminLayout = (title, content) => `<!DOCTYPE html>
-<html data-theme="light">
+function adminLayout(title, content, navActive) {
+  return `<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>${title} - TillKit Admin</title>
-  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2/css/pico.min.css">
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} \u2014 TillKit Admin</title>
   <style>
-    :root { --pico-font-family-sans-serif: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    aside nav a { text-decoration:none; }
-    .status-badge { display:inline-block; padding:.25rem .5rem; border-radius:4px; font-size:.75rem; font-weight:500; text-transform:uppercase; }
-    .status-pending,.status-draft { background:var(--pico-background-color); color:var(--pico-muted-color); }
-    .status-active,.status-paid,.status-success { background:#e6f4ea; color:#1e8e3e; }
-    .status-shipped,.status-confirmed { background:#e8f0fe; color:#1967d2; }
-    .status-delivered,.status-fulfilled { background:#fce8e6; color:#c5221f; }
-    .status-cancelled,.status-archived,.status-failure { background:var(--pico-contrast); color:var(--pico-background-color); }
-    .admin-table th,.admin-table td{ padding:.75rem 1rem; }
-    .admin-table tbody tr:hover{ background:var(--pico-muted-border-color); }
-    .inline-edit{ border:none; background:transparent; width:100%; padding:.5rem; }
-    .inline-edit:focus{ outline:2px solid var(--pico-primary-focus); }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #222; }
+    .layout { display: flex; min-height: 100vh; }
+    .sidebar { width: 240px; background: #111; color: white; padding: 24px 16px; flex-shrink: 0; }
+    .sidebar h2 { font-size: 1.1rem; margin-bottom: 24px; font-weight: 600; letter-spacing: -0.02em; }
+    .sidebar a { display: block; color: #aaa; text-decoration: none; padding: 10px 14px; border-radius: 6px; margin-bottom: 4px; font-size: 0.9rem; }
+    .sidebar a:hover, .sidebar a.active { background: #222; color: white; }
+    .main { flex: 1; padding: 32px; overflow: auto; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .topbar h1 { font-size: 1.6rem; font-weight: 600; }
+    .btn { display: inline-block; padding: 8px 16px; background: #000; color: white; text-decoration: none; border-radius: 6px; border: none; font-size: 0.9rem; cursor: pointer; }
+    .btn:hover { background: #333; }
+    .btn-danger { background: #c00; }
+    .btn-danger:hover { background: #900; }
+    .btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+    .card { background: white; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .card h3 { font-size: 1.1rem; margin-bottom: 16px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .stat-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .stat-card .label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .stat-card .value { font-size: 1.6rem; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid #eee; }
+    th { font-weight: 600; color: #555; font-size: 0.8rem; text-transform: uppercase; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
+    .badge-pending { background: #fef3c7; color: #b45309; }
+    .badge-paid { background: #d1fae5; color: #065f46; }
+    .badge-fulfilled { background: #dbeafe; color: #1e40af; }
+    .badge-cancelled { background: #fee2e2; color: #991b1b; }
+    .badge-draft { background: #f3f4f6; color: #4b5563; }
+    .badge-active { background: #dcfce7; color: #166534; }
+    .badge-archived { background: #fee2e2; color: #991b1b; }
+    .filters { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+    select, input[type="text"], input[type="number"], textarea { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9rem; font-family: inherit; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 0.85rem; }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; }
+    textarea { min-height: 80px; resize: vertical; }
+    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+    .actions { display: flex; gap: 8px; }
+    @media (max-width: 768px) { .sidebar { display: none; } .stats { grid-template-columns: 1fr; } }
   </style>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
 <body>
-<div class="container-fluid">
-  <nav style="margin-bottom:2rem;">
-    <ul><li><strong>TillKit</strong></li></ul>
-    <ul><li><a href="/">Store</a></li></ul>
-  </nav>
-  <div class="grid">
-    <aside style="min-width:200px;max-width:240px; padding-right:2rem;">
-      <details open>
-        <summary style="font-weight:600;margin-bottom:.5rem;list-style:none;">Menu</summary>
-        <nav>
-          <ul>
-            <li><a href="/admin">Dashboard</a></li>
-            <li><details><summary>Products</summary>
-              <ul><li><a href="/admin/products">All Products</a></li><li><a href="/admin/products/new">Add Product</a></li></ul>
-            </details></li>
-            <li><a href="/admin/orders">Orders</a></li>
-            <li><details><summary>Design</summary>
-              <ul><li><a href="/admin/settings">Settings</a></li></ul>
-            </details></li>
-          </ul>
-        </nav>
-      </details>
-    </aside>
-    <main>${content}</main>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>TillKit Admin</h2>
+      <a href="/admin" class="${navActive === "dashboard" ? "active" : ""}">Dashboard</a>
+      <a href="/admin/orders" class="${navActive === "orders" ? "active" : ""}">Orders</a>
+      <a href="/admin/products" class="${navActive === "products" ? "active" : ""}">Products</a>
+    </nav>
+    <main class="main">
+      ${content}
+    </main>
   </div>
-</div>
 </body>
 </html>`;
-function priceInput(val) {
-  if (!val) return "";
-  return (val / 100).toFixed(2);
 }
-function priceCents(raw) {
-  return Math.round(parseFloat(raw) * 100);
+function formatCurrency(cents) {
+  return "$" + (cents / 100).toFixed(2);
 }
 function createAdminRoutes(config) {
-  const { database, basePath = "/admin", features } = config;
-  const router = new Hono2();
-  router.get("/", async (c) => {
-    const orders = await database.orders.list({ limit: 100 });
+  const { database: db, features = { variants: true, collections: false, inventoryTracking: true, subscriptions: false, multiCurrency: false } } = config;
+  const app = new Hono2();
+  app.get("/", async (c) => {
+    const [ordersResult, productsResult] = await Promise.all([
+      db.orders.list({ limit: 100 }),
+      db.products.list({ limit: 1 })
+    ]);
     const today = /* @__PURE__ */ new Date();
     today.setHours(0, 0, 0, 0);
-    const todayOrders = orders.items.filter((o) => new Date(o.createdAt) >= today);
-    const totalRevenue = orders.items.reduce((sum, o) => sum + (o.status === "cancelled" ? 0 : o.total), 0);
-    const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.status === "cancelled" ? 0 : o.total), 0);
-    return c.html(adminLayout("Dashboard", `
-      <h1>Dashboard</h1>
-      <div class="grid" style="margin-bottom:2rem;">
-        <article><h6 class="muted">Today's Revenue</h6><h2>${formatPrice(todayRevenue, "USD")}</h2></article>
-        <article><h6 class="muted">Today's Orders</h6><h2>${todayOrders.length}</h2></article>
-        <article><h6 class="muted">Total Revenue</h6><h2>${formatPrice(totalRevenue, "USD")}</h2></article>
-        <article><h6 class="muted">Total Orders</h6><h2>${orders.total}</h2></article>
+    const todaysOrders = ordersResult.items.filter((o) => new Date(o.createdAt) >= today);
+    const revenue = todaysOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const content = `
+      <div class="topbar">
+        <h1>Dashboard</h1>
       </div>
-      <div class="grid">
-        <a href="${basePath}/orders" role="button" class="outline">
-          <h4>\u{1F4CB} Orders</h4><p class="muted">${orders.total} total</p>
-        </a>
-        <a href="${basePath}/products" role="button" class="outline">
-          <h4>\u{1F6CD}\uFE0F Products</h4><p class="muted">Manage products</p>
-        </a>
+      <div class="stats">
+        <div class="stat-card">
+          <div class="label">Today's Revenue</div>
+          <div class="value">${formatCurrency(revenue)}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Today's Orders</div>
+          <div class="value">${todaysOrders.length}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Total Products</div>
+          <div class="value">${productsResult.total}</div>
+        </div>
       </div>
-    `));
-  });
-  router.get("/products", async (c) => {
-    const page = parseInt(c.req.query("page") || "1", 10);
-    const status = c.req.query("status");
-    const perPage = 20;
-    const result = await database.products.list({
-      limit: perPage,
-      offset: (page - 1) * perPage,
-      filters: status ? { status } : void 0
-    });
-    return c.html(adminLayout("Products", `
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <h1>Products</h1>
-        <a href="${basePath}/products/new" role="button">+ Add Product</a>
-      </div>
-      <div style="display:flex;gap:.5rem;margin:1rem 0;">
-        <a href="${basePath}/products" class="${!status ? "contrast" : ""}" style="text-decoration:none;">All</a>
-        <a href="${basePath}/products?status=draft" class="${status === "draft" ? "contrast" : ""}" style="text-decoration:none;">Draft</a>
-        <a href="${basePath}/products?status=active" class="${status === "active" ? "contrast" : ""}" style="text-decoration:none;">Active</a>
-        <a href="${basePath}/products?status=archived" class="${status === "archived" ? "contrast" : ""}" style="text-decoration:none;">Archived</a>
-      </div>
-      <table class="admin-table">
-        <thead><tr><th>Name</th><th>Slug</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${result.items.map((p) => `
-            <tr>
-              <td><a href="${basePath}/products/${p.id}">${p.name}</a></td>
-              <td>${p.slug}</td>
-              <td>${formatPrice(p.price, "USD")}</td>
-              <td><span class="status-badge status-${p.status}">${p.status}</span></td>
-              <td>
-                <a href="${basePath}/products/${p.id}" role="button" class="outline secondary" style="padding:.25rem .5rem;font-size:.75rem;">Edit</a>
-                <button hx-delete="${basePath}/products/${p.id}" hx-confirm="Delete this product?" hx-target="closest tr" hx-swap="outerHTML" class="outline" style="padding:.25rem .5rem;font-size:.75rem;">Delete</button>
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-      <div style="display:flex;justify-content:center;gap:1rem;margin-top:1rem;">
-        ${page > 1 ? `<a href="${basePath}/products?page=${page - 1}${status ? `&status=${status}` : ""}">\u2190 Previous</a>` : ""}
-        ${result.hasMore ? `<a href="${basePath}/products?page=${page + 1}${status ? `&status=${status}` : ""}">Next \u2192</a>` : ""}
-      </div>
-    `));
-  });
-  router.get("/products/new", async (c) => {
-    return c.html(adminLayout("New Product", productForm({ basePath, product: null, features })));
-  });
-  router.post("/products", async (c) => {
-    const body = await c.req.parseBody();
-    const data = buildProductInput(body, features);
-    try {
-      const product = await database.products.create(data);
-      return c.redirect(`${basePath}/products/${product.id}`);
-    } catch (err) {
-      console.error("Failed to create product:", err);
-      return c.html(adminLayout("Error", `<p class="text-red">Failed to create product.</p>`), 500);
-    }
-  });
-  router.get("/products/:id", async (c) => {
-    const id = c.req.param("id");
-    const product = await database.products.get(id);
-    if (!product) return c.notFound();
-    return c.html(adminLayout(product.name, productForm({ basePath, product, features })));
-  });
-  router.post("/products/:id", async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.parseBody();
-    const data = buildProductInput(body, features);
-    try {
-      await database.products.update(id, data);
-      return c.redirect(`${basePath}/products/${id}`);
-    } catch (err) {
-      console.error("Failed to update product:", err);
-      return c.html(adminLayout("Error", `<p class="text-red">Failed to update product.</p>`), 500);
-    }
-  });
-  router.delete("/products/:id", async (c) => {
-    const id = c.req.param("id");
-    try {
-      await database.products.delete(id);
-      return c.body("");
-    } catch (err) {
-      console.error("Failed to delete product:", err);
-      return c.html('<p class="text-red">Delete failed</p>', 500);
-    }
-  });
-  router.get("/orders", async (c) => {
-    const page = parseInt(c.req.query("page") || "1", 10);
-    const status = c.req.query("status");
-    const perPage = 20;
-    const result = await database.orders.list({
-      limit: perPage,
-      offset: (page - 1) * perPage,
-      filters: status ? { status } : void 0
-    });
-    return c.html(adminLayout("Orders", `
-      <h1>Orders</h1>
-      <div style="display:flex;gap:.5rem;margin:1rem 0;">
-        <a href="${basePath}/orders" class="${!status ? "contrast" : ""}" style="text-decoration:none;">All</a>
-        <a href="${basePath}/orders?status=pending" class="${status === "pending" ? "contrast" : ""}" style="text-decoration:none;">Pending</a>
-        <a href="${basePath}/orders?status=paid" class="${status === "paid" ? "contrast" : ""}" style="text-decoration:none;">Paid</a>
-        <a href="${basePath}/orders?status=shipped" class="${status === "shipped" ? "contrast" : ""}" style="text-decoration:none;">Shipped</a>
-        <a href="${basePath}/orders?status=delivered" class="${status === "delivered" ? "contrast" : ""}" style="text-decoration:none;">Delivered</a>
-      </div>
-      <table class="admin-table">
-        <thead><tr><th>Order #</th><th>Date</th><th>Email</th><th>Status</th><th>Total</th></tr></thead>
-        <tbody>
-          ${result.items.map((o) => `
-            <tr>
-              <td><a href="${basePath}/orders/${o.id}">${o.orderNumber}</a></td>
-              <td>${new Date(o.createdAt).toLocaleDateString()}</td>
-              <td>${o.email}</td>
-              <td><span class="status-badge status-${o.status}">${o.status}</span></td>
-              <td>${formatPrice(o.total, o.currency)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-      <div style="display:flex;justify-content:center;gap:1rem;margin-top:1rem;">
-        ${page > 1 ? `<a href="${basePath}/orders?page=${page - 1}${status ? `&status=${status}` : ""}">\u2190 Previous</a>` : ""}
-        ${result.hasMore ? `<a href="${basePath}/orders?page=${page + 1}${status ? `&status=${status}` : ""}">Next \u2192</a>` : ""}
-      </div>
-    `));
-  });
-  router.get("/orders/:id", async (c) => {
-    const id = c.req.param("id");
-    const order = await database.orders.get(id);
-    if (!order) return c.html(adminLayout("Not Found", `<p>Order not found.</p>`), 404);
-    return c.html(adminLayout(`Order ${order.orderNumber}`, `
-      <div style="display:flex;justify-content:space-between;align-items:center; margin-bottom:1rem;">
-        <h1>Order ${order.orderNumber}</h1>
-        <a href="${basePath}/orders" role="button" class="outline">\u2190 Back</a>
-      </div>
-      <article>
-        <h4>Order Status</h4>
-        <form method="post" action="${basePath}/orders/${order.id}/status">
-          <select name="status" style="display:inline-block;width:auto;margin-right:.5rem;">
-            <option value="pending" ${order.status === "pending" ? "selected" : ""}>Pending</option>
-            <option value="confirmed" ${order.status === "confirmed" ? "selected" : ""}>Confirmed</option>
-            <option value="paid" ${order.status === "paid" ? "selected" : ""}>Paid</option>
-            <option value="fulfilled" ${order.status === "fulfilled" ? "selected" : ""}>Fulfilled</option>
-            <option value="shipped" ${order.status === "shipped" ? "selected" : ""}>Shipped</option>
-            <option value="delivered" ${order.status === "delivered" ? "selected" : ""}>Delivered</option>
-            <option value="cancelled" ${order.status === "cancelled" ? "selected" : ""}>Cancelled</option>
-            <option value="refunded" ${order.status === "refunded" ? "selected" : ""}>Refunded</option>
-          </select>
-          <button type="submit">Update</button>
-        </form>
-      </article>
-      <article style="margin-top:1rem;">
-        <h4>Customer</h4>
-        <p><strong>Email:</strong> ${order.email}</p>
-        ${order.customerId ? `<p><strong>Customer:</strong> ${order.customerId}</p>` : ""}
-      </article>
-      ${order.shippingAddress ? `
-      <article style="margin-top:1rem;">
-        <h4>Shipping Address</h4>
-        <p>${order.shippingAddress.address1}</p>
-        <p>${order.shippingAddress.city}, ${order.shippingAddress.province || ""} ${order.shippingAddress.postalCode}</p>
-        <p>${order.shippingAddress.country}</p>
-      </article>` : ""}
-      <article style="margin-top:1rem;">
-        <h4>Items</h4>
-        <table class="admin-table">
-          <thead><tr><th>Product</th><th>SKU</th><th>Price</th><th>Qty</th><th>Total</th></tr></thead>
+      <div class="card">
+        <h3>Recent Orders</h3>
+        <table>
+          <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
           <tbody>
-            ${order.items.map((i) => `
-              <tr><td>${i.name}</td><td>${i.sku}</td><td>${formatPrice(i.price, order.currency)}</td><td>${i.quantity}</td><td>${formatPrice(i.total, order.currency)}</td></tr>
+            ${ordersResult.items.slice(0, 5).map((o) => `
+              <tr>
+                <td><a href="/admin/orders/${o.id}">${o.orderNumber || o.id}</a></td>
+                <td>${o.email || "Guest"}</td>
+                <td><span class="badge badge-${o.status}">${o.status}</span></td>
+                <td>${formatCurrency(o.total || 0)}</td>
+                <td>${new Date(o.createdAt).toLocaleDateString()}</td>
+              </tr>
             `).join("")}
+            ${ordersResult.items.length === 0 ? '<tr><td colspan="5" style="color:#999;">No orders yet</td></tr>' : ""}
           </tbody>
         </table>
-      </article>
-      <article style="margin-top:1rem;">
-        <h4>Totals</h4>
-        <p><strong>Subtotal:</strong> ${formatPrice(order.subtotal, order.currency)}</p>
-        <p><strong>Tax:</strong> ${formatPrice(order.totalTax, order.currency)}</p>
-        <p><strong>Shipping:</strong> ${formatPrice(order.totalShipping, order.currency)}</p>
-        ${order.totalDiscount ? `<p><strong>Discount:</strong> -${formatPrice(order.totalDiscount, order.currency)}</p>` : ""}
-        <p><strong>Total:</strong> ${formatPrice(order.total, order.currency)}</p>
-      </article>
-    `));
+      </div>
+    `;
+    return c.html(adminLayout("Dashboard", content, "dashboard"));
   });
-  router.post("/orders/:id/status", async (c) => {
+  app.get("/orders", async (c) => {
+    const status = c.req.query("status");
+    const result = await db.orders.list({
+      limit: 50,
+      filters: status ? { status } : void 0
+    });
+    const content = `
+      <div class="topbar">
+        <h1>Orders</h1>
+      </div>
+      <div class="card">
+        <div class="filters">
+          <form method="get">
+            <select name="status" onchange="this.form.submit()">
+              <option value="">All Statuses</option>
+              <option value="pending" ${status === "pending" ? "selected" : ""}>Pending</option>
+              <option value="paid" ${status === "paid" ? "selected" : ""}>Paid</option>
+              <option value="fulfilled" ${status === "fulfilled" ? "selected" : ""}>Fulfilled</option>
+              <option value="cancelled" ${status === "cancelled" ? "selected" : ""}>Cancelled</option>
+            </select>
+          </form>
+        </div>
+        <table>
+          <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Total</th><th>Date</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${result.items.map((o) => `
+              <tr>
+                <td>${o.orderNumber || o.id}</td>
+                <td>${o.email || "Guest"}</td>
+                <td><span class="badge badge-${o.status}">${o.status}</span></td>
+                <td>${formatCurrency(o.total || 0)}</td>
+                <td>${new Date(o.createdAt).toLocaleDateString()}</td>
+                <td><a class="btn btn-sm" href="/admin/orders/${o.id}">View</a></td>
+              </tr>
+            `).join("")}
+            ${result.items.length === 0 ? '<tr><td colspan="6" style="color:#999;">No orders found</td></tr>' : ""}
+          </tbody>
+        </table>
+      </div>
+    `;
+    return c.html(adminLayout("Orders", content, "orders"));
+  });
+  app.get("/orders/:id", async (c) => {
+    const id = c.req.param("id");
+    const order = await db.orders.get(id);
+    if (!order) return c.notFound();
+    const content = `
+      <div class="topbar">
+        <h1>Order ${order.orderNumber || order.id}</h1>
+        <a class="btn" href="/admin/orders">Back to Orders</a>
+      </div>
+      <div class="card">
+        <p><strong>Customer:</strong> ${order.email || "Guest"}</p>
+        <p><strong>Status:</strong> <span class="badge badge-${order.status}">${order.status}</span></p>
+        <p><strong>Total:</strong> ${formatCurrency(order.total || 0)}</p>
+        <p><strong>Subtotal:</strong> ${formatCurrency(order.subtotal || 0)}</p>
+        <p><strong>Currency:</strong> ${order.currency}</p>
+        <p><strong>Date:</strong> ${new Date(order.createdAt).toLocaleString()}</p>
+      </div>
+      <div class="card">
+        <h3>Update Status</h3>
+        <form method="post" action="/admin/orders/${order.id}/status">
+          <div class="form-group">
+            <label>Status</label>
+            <select name="status">
+              <option value="pending" ${order.status === "pending" ? "selected" : ""}>Pending</option>
+              <option value="paid" ${order.status === "paid" ? "selected" : ""}>Paid</option>
+              <option value="fulfilled" ${order.status === "fulfilled" ? "selected" : ""}>Fulfilled</option>
+              <option value="cancelled" ${order.status === "cancelled" ? "selected" : ""}>Cancelled</option>
+            </select>
+          </div>
+          <button type="submit" class="btn">Update Status</button>
+        </form>
+      </div>
+    `;
+    return c.html(adminLayout("Order Details", content, "orders"));
+  });
+  app.post("/orders/:id/status", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.parseBody();
-    const status = body.status;
+    const newStatus = body.status;
+    if (!newStatus) return c.json({ error: "Status required" }, 400);
     try {
-      await database.orders.updateStatus(id, status);
-    } catch (err) {
-      console.error("Status update failed", err);
+      await db.orders.updateStatus(id, newStatus);
+    } catch {
+      return c.json({ error: "Order not found" }, 404);
     }
-    return c.redirect(`${basePath}/orders/${id}`);
+    return c.redirect("/admin/orders");
   });
-  return router;
-}
-function productForm(opts) {
-  const { product, features, basePath } = opts;
-  const isNew = !product;
-  return `
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <h1>${isNew ? "New Product" : product.name}</h1>
-      <a href="${basePath}/products" role="button" class="outline">Cancel</a>
-    </div>
-    <form method="post" action="${basePath}/products${!isNew ? "/" + product.id : ""}" style="margin-top:1rem;">
-      <fieldset>
-        <label>
-          Name
-          <input name="name" type="text" value="${escapeHtml(product?.name || "")}" required
-                 onchange="if(!this.form.slug.value){this.form.slug.value=slugify(this.value);}">
-        </label>
-        <label>
-          Slug
-          <input name="slug" type="text" value="${escapeHtml(product?.slug || "")}" required>
-        </label>
-        <label>
-          Description
-          <textarea name="description" rows="4">${escapeHtml(product?.description || "")}</textarea>
-        </label>
-        <div class="grid">
-          <label>
-            Price ($)
-            <input name="price_dollars" type="number" step="0.01" min="0" required
-                   value="${priceInput(product?.price)}">
-          </label>
-          <label>
-            Compare-at Price ($)
-            <input name="compare_at_price_dollars" type="number" step="0.01" min="0"
-                   value="${priceInput(product?.compareAtPrice)}">
-          </label>
-          <label>
-            Status
-            <select name="status">
-              <option value="draft" ${product?.status === "draft" ? "selected" : ""}>Draft</option>
-              <option value="active" ${product?.status === "active" ? "selected" : ""}>Active</option>
-              <option value="archived" ${product?.status === "archived" ? "selected" : ""}>Archived</option>
-            </select>
-          </label>
-        </div>
-      </fieldset>
-
-      ${features.inventoryTracking ? `
-        <fieldset>
-          <legend>Inventory</legend>
-          <div class="grid">
-            <label>
-              Quantity
-              <input name="inventory_quantity" type="number" min="0" value="${product?.inventory?.quantity ?? 0}">
-            </label>
-            <label>
-              Allow out of stock?
-              <select name="inventory_allow_oos">
-                <option value="false" ${!product?.inventory?.allowOutOfStock && product?.inventory ? "selected" : ""}>No</option>
-                <option value="true" ${product?.inventory?.allowOutOfStock ? "selected" : ""}>Yes</option>
-              </select>
-            </label>
-          </div>
-        </fieldset>
-      ` : ""}
-
-      ${features.variants ? `
-        <fieldset>
-          <legend>Variants</legend>
-          <p class="muted">Enter variant options as JSON (e.g. [{"name":"Size","values":["S","M","L"]}])</p>
-          <label>
-            Options
-            <textarea name="options_json" rows="3">${escapeHtml(JSON.stringify(product?.options || []))}</textarea>
-          </label>
-          <p class="muted">Enter variants as JSON (e.g. [{"sku":"SHIRT-RED-S","name":"Red / S","price":null,"options":{"Color":"Red","Size":"S"}}])</p>
-          <label>
-            Variants
-            <textarea name="variants_json" rows="6">${escapeHtml(JSON.stringify(product?.variants || []))}</textarea>
-          </label>
-        </fieldset>
-      ` : ""}
-
-      <fieldset>
-        <legend>Images</legend>
-        <p class="muted">Enter image URLs as JSON (e.g. [{"url":"https://cdn.example.com/img.jpg","alt":"Photo"}])</p>
-        <label>
-          Images
-          <textarea name="images_json" rows="3">${escapeHtml(JSON.stringify(product?.images || []))}</textarea>
-        </label>
-      </fieldset>
-
-      <fieldset>
-        <legend>SEO</legend>
-        <label>Title <input name="seo_title" type="text" value="${escapeHtml(product?.seo?.title || "")}"></label>
-        <label>Description <textarea name="seo_description" rows="2">${escapeHtml(product?.seo?.description || "")}</textarea></label>
-        <label>Keywords (comma separated)
-          <input name="seo_keywords" type="text" value="${escapeHtml((product?.seo?.keywords || []).join(", "))}">
-        </label>
-      </fieldset>
-
-      <div style="display:flex;gap:1rem;margin-top:1rem;">
-        <button type="submit">${isNew ? "Create Product" : "Save Changes"}</button>
-        ${!isNew ? `<button type="button" hx-delete="${basePath}/products/${product.id}" hx-confirm="Delete this product?" hx-redirect="${basePath}/products" class="outline secondary">Delete</button>` : ""}
+  app.get("/products", async (c) => {
+    const page = parseInt(c.req.query("page") || "1");
+    const result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+    const content = `
+      <div class="topbar">
+        <h1>Products</h1>
+        <a class="btn" href="/admin/products/new">Create Product</a>
       </div>
-    </form>
-    ${isNew ? '<script>function slugify(t){return t.toLowerCase().trim().replace(/[^\\w\\s-]/g,"").replace(/[\\s_-]+/g,"-").replace(/^-+|-+$/g,"");}</script>' : ""}
-  `;
-}
-function buildProductInput(body, features) {
-  const images = safeJsonParse(body.images_json, []);
-  const seo = {};
-  if (body.seo_title) seo.title = body.seo_title;
-  if (body.seo_description) seo.description = body.seo_description;
-  if (body.seo_keywords) seo.keywords = body.seo_keywords.split(",").map((s) => s.trim()).filter(Boolean);
-  const data = {
-    slug: body.slug,
-    name: body.name,
-    description: body.description || void 0,
-    price: priceCents(body.price_dollars),
-    compareAtPrice: body.compare_at_price_dollars ? priceCents(body.compare_at_price_dollars) : void 0,
-    images,
-    status: body.status,
-    seo: Object.keys(seo).length ? seo : void 0
-  };
-  if (features.inventoryTracking) {
-    data.inventory = {
-      quantity: parseInt(body.inventory_quantity || "0", 10),
-      available: parseInt(body.inventory_quantity || "0", 10),
-      allowOutOfStock: body.inventory_allow_oos === "true"
+      <div class="card">
+        <table>
+          <thead><tr><th>Name</th><th>Slug</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${result.items.map((p) => `
+              <tr>
+                <td><strong>${p.name}</strong></td>
+                <td>${p.slug}</td>
+                <td>${formatCurrency(p.price || 0)}</td>
+                <td><span class="badge badge-${p.status}">${p.status}</span></td>
+                <td class="actions">
+                  <a class="btn btn-sm" href="/admin/products/${p.id}/edit">Edit</a>
+                  <button class="btn btn-sm btn-danger" hx-delete="/admin/products/${p.id}" hx-confirm="Delete ${p.name}?" hx-target="closest tr" hx-swap="outerHTML">Delete</button>
+                </td>
+              </tr>
+            `).join("")}
+            ${result.items.length === 0 ? '<tr><td colspan="5" style="color:#999;">No products yet</td></tr>' : ""}
+          </tbody>
+        </table>
+      </div>
+    `;
+    return c.html(adminLayout("Products", content, "products"));
+  });
+  app.get("/products/new", async (c) => {
+    const showVariants = features.variants;
+    const showInventory = features.inventoryTracking;
+    const content = `
+      <div class="topbar">
+        <h1>Create Product</h1>
+        <a class="btn" href="/admin/products">Back to Products</a>
+      </div>
+      <form method="post" action="/admin/products" class="card">
+        <div class="row">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" name="name" placeholder="Product name" required />
+          </div>
+          <div class="form-group">
+            <label>Slug</label>
+            <input type="text" name="slug" placeholder="product-slug" required />
+          </div>
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label>Price (cents)</label>
+            <input type="number" name="price" placeholder="1999" required />
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select name="status">
+              <option value="draft">Draft</option>
+              <option value="active" selected>Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea name="description" placeholder="Product description..."></textarea>
+        </div>
+        ${showInventory ? `
+        <div class="row">
+          <div class="form-group">
+            <label>Stock Quantity</label>
+            <input type="number" name="stock" placeholder="100" />
+          </div>
+          <div class="form-group">
+            <label>Track Inventory</label>
+            <select name="trackInventory">
+              <option value="true" selected>Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+        </div>
+        ` : ""}
+        ${showVariants ? `
+        <div class="card" style="margin-top: 16px;">
+          <h3>Variants</h3>
+          <p style="color:#666; font-size:0.85rem;">Variants are enabled. Define them after creation.</p>
+        </div>
+        ` : ""}
+        <button type="submit" class="btn">Create Product</button>
+      </form>
+    `;
+    return c.html(adminLayout("Create Product", content, "products"));
+  });
+  app.post("/products", async (c) => {
+    const body = await c.req.parseBody();
+    const data = {
+      name: body.name,
+      slug: body.slug,
+      price: parseInt(body.price) || 0,
+      status: body.status || "draft",
+      description: body.description
     };
-  }
-  if (features.variants) {
-    data.options = safeJsonParse(body.options_json, []);
-    data.variants = safeJsonParse(body.variants_json, []);
-  }
-  return data;
-}
-function safeJsonParse(str, fallback) {
-  try {
-    return str ? JSON.parse(str) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function escapeHtml(text) {
-  if (!text) return "";
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    if (features.inventoryTracking && body.stock) {
+      data.inventory = {
+        available: parseInt(body.stock) || 0,
+        quantity: parseInt(body.stock) || 0,
+        allowOutOfStock: false
+      };
+    }
+    try {
+      await db.products.create(data);
+      return c.redirect("/admin/products");
+    } catch {
+      return c.json({ error: "Failed to create product" }, 500);
+    }
+  });
+  app.get("/products/:id/edit", async (c) => {
+    const id = c.req.param("id");
+    const product = await db.products.get(id);
+    if (!product) return c.notFound();
+    const showVariants = features.variants;
+    const showInventory = features.inventoryTracking;
+    const content = `
+      <div class="topbar">
+        <h1>Edit Product</h1>
+        <a class="btn" href="/admin/products">Back to Products</a>
+      </div>
+      <form method="post" action="/admin/products/${product.id}" class="card">
+        <div class="row">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" name="name" value="${product.name || ""}" required />
+          </div>
+          <div class="form-group">
+            <label>Slug</label>
+            <input type="text" name="slug" value="${product.slug || ""}" required />
+          </div>
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label>Price (cents)</label>
+            <input type="number" name="price" value="${product.price || 0}" required />
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select name="status">
+              <option value="draft" ${product.status === "draft" ? "selected" : ""}>Draft</option>
+              <option value="active" ${product.status === "active" ? "selected" : ""}>Active</option>
+              <option value="archived" ${product.status === "archived" ? "selected" : ""}>Archived</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea name="description">${product.description || ""}</textarea>
+        </div>
+        ${showInventory ? `
+        <div class="form-group">
+          <label>Stock Quantity</label>
+          <input type="number" name="stock" value="${product.inventory?.available || 0}" />
+        </div>
+        ` : ""}
+        ${showVariants && product.variants?.length ? `
+        <div class="card" style="margin-top: 16px;">
+          <h3>Variants (${product.variants.length})</h3>
+          <table>
+            <thead><tr><th>SKU</th><th>Options</th><th>Price</th><th>Stock</th></tr></thead>
+            <tbody>
+              ${product.variants.map((v) => `
+                <tr>
+                  <td>${v.sku || "-"}</td>
+                  <td>${JSON.stringify(v.options)}</td>
+                  <td>${formatCurrency(v.price || product.price || 0)}</td>
+                  <td>${v.inventory?.available ?? "-"}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+        ` : ""}
+        ${showVariants && (!product.variants || product.variants.length === 0) ? `
+        <div class="card" style="margin-top: 16px;">
+          <h3>Variants</h3>
+          <p style="color:#666; font-size:0.85rem;">No variants yet. Variants can be added via API.</p>
+        </div>
+        ` : ""}
+        <button type="submit" class="btn">Update Product</button>
+      </form>
+    `;
+    return c.html(adminLayout("Edit Product", content, "products"));
+  });
+  app.post("/products/:id", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.parseBody();
+    const data = {
+      name: body.name,
+      slug: body.slug,
+      price: parseInt(body.price) || 0,
+      status: body.status || "draft",
+      description: body.description
+    };
+    if (features.inventoryTracking && body.stock !== void 0) {
+      data.inventory = {
+        available: parseInt(body.stock) || 0,
+        quantity: parseInt(body.stock) || 0,
+        allowOutOfStock: false
+      };
+    }
+    try {
+      await db.products.update(id, data);
+      return c.redirect("/admin/products");
+    } catch {
+      return c.json({ error: "Failed to update product" }, 500);
+    }
+  });
+  app.delete("/products/:id", async (c) => {
+    const id = c.req.param("id");
+    try {
+      await db.products.delete(id);
+      c.header("HX-Redirect", "/admin/products");
+      return c.body("");
+    } catch {
+      return c.json({ error: "Failed to delete product" }, 500);
+    }
+  });
+  return app;
 }
 
 // src/routes/webhooks.ts
@@ -605,8 +615,105 @@ async function createOrderFromStripeSession({
   }
 }
 
-// src/routes/auth.ts
+// src/routes/paypal-webhooks.ts
 import { Hono as Hono4 } from "hono";
+function createPayPalWebhookRoutes(config) {
+  const router = new Hono4();
+  router.post("/paypal", async (c) => {
+    const payload = await c.req.text();
+    try {
+      const event = config.paypal.handleWebhook(payload, Object.fromEntries(c.req.raw.headers.entries()));
+      const result = await config.paypal.processWebhookEvent(event);
+      if (result.type === "payment_success") {
+        const data = result.data;
+        if (config.onPaymentSuccess) {
+          await config.onPaymentSuccess({
+            orderId: data.orderId,
+            captureId: data.captureId,
+            amount: data.amount,
+            currency: data.currency,
+            payerEmail: data.payerEmail ?? null,
+            payerId: data.payerId ?? null,
+            metadata: data.metadata ?? null
+          });
+        }
+        console.log("PayPal payment captured:", {
+          captureId: data.captureId,
+          amount: data.amount
+        });
+      }
+      if (result.type === "payment_failure" && config.onPaymentFailure) {
+        await config.onPaymentFailure({ error: result.data });
+      }
+      return c.json({ received: true });
+    } catch (err) {
+      console.error("PayPal webhook error:", err.message);
+      return c.json({ error: "Webhook processing failed" }, 400);
+    }
+  });
+  return router;
+}
+async function createOrderFromPayPalCapture({
+  database,
+  paypal,
+  orderId,
+  cartId,
+  getSessionIdFn
+}) {
+  try {
+    const paypalOrder = await paypal.getOrder(orderId);
+    if (paypalOrder.status !== "COMPLETED" && paypalOrder.status !== "APPROVED") {
+      console.log("PayPal order not completed yet:", paypalOrder.status);
+      return null;
+    }
+    const cart = await database.cart.get(cartId);
+    if (!cart) {
+      console.log("No cart found for session:", cartId);
+      return null;
+    }
+    const existing = await database.orders.getByNumber?.(paypalOrder.id);
+    if (existing) return existing.id;
+    let capture;
+    if (paypalOrder.status === "APPROVED") {
+      capture = await paypal.capturePayment(orderId);
+    } else {
+      capture = { id: paypalOrder.id, status: "COMPLETED", amount: paypalOrder.amount, currency: paypalOrder.currency };
+    }
+    const order = await database.orders.create({
+      email: "",
+      // PayPal webhooks provide this
+      customerId: getSessionIdFn(),
+      status: "paid",
+      paymentStatus: "paid",
+      items: cart.items.map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        sku: item.sku,
+        price: item.price,
+        quantity: item.quantity,
+        lineTotal: item.lineTotal || item.price * item.quantity
+      })),
+      subtotal: cart.subtotal || cart.items.reduce((sum, i) => sum + i.price * i.quantity, 0),
+      total: capture.amount || cart.subtotal || cart.total || 0,
+      currency: capture.currency?.toUpperCase() || "USD",
+      // shippingAddress omitted: cart has no shippingAddress
+      shippingAddress: { address1: "", city: "", postalCode: "", country: "" },
+      // @ts-ignore
+      notes: "",
+      metadata: { paypalOrderId: orderId }
+    });
+    const txn = paypal.createTransactionFromCapture(capture);
+    await database.orders.addTransaction(order.id, txn);
+    console.log("PayPal Order created:", order.orderNumber);
+    return order.id;
+  } catch (err) {
+    console.error("Failed to create order from PayPal capture:", err);
+    return null;
+  }
+}
+
+// src/routes/auth.ts
+import { Hono as Hono5 } from "hono";
 function createSessionMiddleware(_secret) {
   return async (c, next) => {
     const cookie = c.req.header("cookie") || "";
@@ -717,7 +824,7 @@ var authLayout = (title, content, error) => `<!DOCTYPE html>
 </body>
 </html>`;
 function createAuthRoutes(config) {
-  const router = new Hono4();
+  const router = new Hono5();
   router.use("*", createSessionMiddleware(config.sessionSecret));
   router.get("/login", async (c) => {
     const redirect = c.req.query("redirect") || "/";
@@ -1205,7 +1312,7 @@ function createTheme(name, baseTheme, overrides) {
 
 // src/index.ts
 function createHonoApp(config) {
-  const app = new Hono5();
+  const app = new Hono6();
   const features = config.features || {
     variants: true,
     collections: false,
@@ -1236,13 +1343,15 @@ function createHonoApp(config) {
   return app;
 }
 export {
-  Hono5 as Hono,
+  Hono6 as Hono,
   ThemeManager,
   boutiqueTheme,
   createAdminRoutes,
   createAuthRoutes,
   createHonoApp,
+  createOrderFromPayPalCapture,
   createOrderFromStripeSession,
+  createPayPalWebhookRoutes,
   createProductRoutes,
   createSessionMiddleware,
   createTheme,

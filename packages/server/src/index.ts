@@ -55,6 +55,7 @@ export function createHonoApp(config: {
 // Export route factories
 export { createProductRoutes, createAdminRoutes };
 export { createWebhookRoutes, createOrderFromStripeSession } from './routes/webhooks.js';
+export { createPayPalWebhookRoutes, createOrderFromPayPalCapture } from './routes/paypal-webhooks.js';
 export { createAuthRoutes, requireAuth, createSessionMiddleware } from './routes/auth.js';
 
 // Export themes

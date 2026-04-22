@@ -220,10 +220,10 @@ export function createAdminRoutes(config: AdminConfig) {
   app.post('/orders/:id/status', async (c) => {
     const id = c.req.param('id');
     const body = await c.req.parseBody();
-    const newStatus = body.status as string;
+    const newStatus = body.status as string | undefined;
     if (!newStatus) return c.json({ error: 'Status required' }, 400);
     try {
-      await db.orders.updateStatus(id, newStatus);
+      await db.orders.updateStatus(id, newStatus as any);
     } catch {
       return c.json({ error: 'Order not found' }, 404);
     }
@@ -341,7 +341,8 @@ export function createAdminRoutes(config: AdminConfig) {
     if (features.inventoryTracking && body.stock) {
       data.inventory = {
         available: parseInt(body.stock as string) || 0,
-        tracked: body.trackInventory !== 'false',
+        quantity: parseInt(body.stock as string) || 0,
+        allowOutOfStock: false,
       };
     }
     try {
@@ -394,18 +395,9 @@ export function createAdminRoutes(config: AdminConfig) {
           <textarea name="description">${product.description || ''}</textarea>
         </div>
         ${showInventory ? `
-        <div class="row">
-          <div class="form-group">
-            <label>Stock Quantity</label>
-            <input type="number" name="stock" value="${product.inventory?.available || 0}" />
-          </div>
-          <div class="form-group">
-            <label>Track Inventory</label>
-            <select name="trackInventory">
-              <option value="true" ${product.inventory?.tracked !== false ? 'selected' : ''}>Yes</option>
-              <option value="false" ${product.inventory?.tracked === false ? 'selected' : ''}>No</option>
-            </select>
-          </div>
+        <div class="form-group">
+          <label>Stock Quantity</label>
+          <input type="number" name="stock" value="${product.inventory?.available || 0}" />
         </div>
         ` : ''}
         ${showVariants && product.variants?.length ? `
@@ -452,7 +444,8 @@ export function createAdminRoutes(config: AdminConfig) {
     if (features.inventoryTracking && body.stock !== undefined) {
       data.inventory = {
         available: parseInt(body.stock as string) || 0,
-        tracked: body.trackInventory !== 'false',
+        quantity: parseInt(body.stock as string) || 0,
+        allowOutOfStock: false,
       };
     }
     try {

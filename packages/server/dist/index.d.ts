@@ -1,16 +1,18 @@
-import * as hono from 'hono';
+import * as hono_types from 'hono/types';
 import { Hono } from 'hono';
 export { Hono, Hono as HonoApp } from 'hono';
-import { DatabaseAdapter } from '@tillkit/core';
+import { DatabaseAdapter, StoreFeatures } from '@tillkit/core';
 import { StripeIntegration } from '@tillkit/integration-stripe';
+import { PayPalIntegration } from '@tillkit/integration-paypal';
 
-declare function createProductRoutes(db: DatabaseAdapter): Hono<hono.Env, {}, "/">;
+declare function createProductRoutes(db: DatabaseAdapter): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 
 interface AdminConfig {
     database: DatabaseAdapter;
-    basePath?: string;
+    basePath: string;
+    features?: StoreFeatures;
 }
-declare function createAdminRoutes(config: AdminConfig): Hono<hono.Env, {}, "/">;
+declare function createAdminRoutes(config: AdminConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 
 interface WebhookConfig {
     database: DatabaseAdapter;
@@ -37,12 +39,38 @@ interface WebhookConfig {
         currency: string;
     }) => Promise<void> | void;
 }
-declare function createWebhookRoutes(config: WebhookConfig): Hono<hono.Env, {}, "/">;
+declare function createWebhookRoutes(config: WebhookConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 declare function createOrderFromStripeSession({ database, stripe, sessionId, cartId, getSessionIdFn, }: {
     database: DatabaseAdapter;
     stripe: StripeIntegration;
     sessionId: string;
     cartId?: string;
+    getSessionIdFn: () => string;
+}): Promise<string | null>;
+
+interface PayPalWebhookConfig {
+    database: DatabaseAdapter;
+    paypal: PayPalIntegration;
+    webhookId?: string;
+    onPaymentSuccess?: (data: {
+        orderId?: string;
+        captureId: string;
+        amount: number;
+        currency: string;
+        payerEmail: string | null;
+        payerId: string | null;
+        metadata: Record<string, string> | null;
+    }) => Promise<void> | void;
+    onPaymentFailure?: (data: {
+        error: any;
+    }) => Promise<void> | void;
+}
+declare function createPayPalWebhookRoutes(config: PayPalWebhookConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
+declare function createOrderFromPayPalCapture({ database, paypal, orderId, cartId, getSessionIdFn, }: {
+    database: DatabaseAdapter;
+    paypal: PayPalIntegration;
+    orderId: string;
+    cartId: string;
     getSessionIdFn: () => string;
 }): Promise<string | null>;
 
@@ -53,7 +81,7 @@ interface AuthConfig {
 }
 declare function createSessionMiddleware(_secret: string): (c: any, next: any) => Promise<void>;
 declare function requireAuth(): (c: any, next: any) => Promise<any>;
-declare function createAuthRoutes(config: AuthConfig): Hono<hono.Env, {}, "/">;
+declare function createAuthRoutes(config: AuthConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 
 interface ThemeColors {
     primary: string;
@@ -174,10 +202,11 @@ declare function createTheme(name: string, baseTheme: Theme, overrides: Partial<
 
 declare function createHonoApp(config: {
     database: DatabaseAdapter;
+    features?: StoreFeatures;
     sessionSecret?: string;
     enableAdmin?: boolean;
     adminPath?: string;
-}): Hono<hono.Env, {}, "/">;
+}): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 
 declare module 'hono' {
     interface ContextVariableMap {
@@ -187,4 +216,4 @@ declare module 'hono' {
     }
 }
 
-export { type Theme, type ThemeColors, ThemeManager, type ThemeRadii, type ThemeShadows, type ThemeSpacing, type ThemeTypography, boutiqueTheme, createAdminRoutes, createAuthRoutes, createHonoApp, createOrderFromStripeSession, createProductRoutes, createSessionMiddleware, createTheme, createWebhookRoutes, defaultRadii, defaultShadows, defaultSpacing, defaultTypography, generateCSSVariables, generateInlineThemeCSS, generateThemeCSS, getThemeStyles, minimalTheme, modernTheme, requireAuth, themeManager, themes };
+export { type Theme, type ThemeColors, ThemeManager, type ThemeRadii, type ThemeShadows, type ThemeSpacing, type ThemeTypography, boutiqueTheme, createAdminRoutes, createAuthRoutes, createHonoApp, createOrderFromPayPalCapture, createOrderFromStripeSession, createPayPalWebhookRoutes, createProductRoutes, createSessionMiddleware, createTheme, createWebhookRoutes, defaultRadii, defaultShadows, defaultSpacing, defaultTypography, generateCSSVariables, generateInlineThemeCSS, generateThemeCSS, getThemeStyles, minimalTheme, modernTheme, requireAuth, themeManager, themes };
