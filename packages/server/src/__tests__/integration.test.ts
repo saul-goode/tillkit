@@ -12,15 +12,43 @@ function createMockDatabase(): DatabaseAdapter {
   let orderCounter = 1;
   
   return {
-    products: {
-      list: async () => ({ items: [], total: 0, page: 1, perPage: 20, hasMore: false }),
-      get: async () => null,
-      getBySlug: async () => null,
-      create: async (data) => ({ id: '1', ...data, createdAt: new Date(), updatedAt: new Date() } as any),
-      update: async (id, data) => ({ id, ...data, updatedAt: new Date() } as any),
-      delete: async () => {},
-      search: async () => [],
-    },
+    products: (() => {
+      const items: any[] = [];
+      let counter = 1;
+      return {
+        list: async (options: any = {}) => {
+          const limit = options?.limit || 20;
+          const offset = options?.offset || 0;
+          return {
+            items: items.slice(offset, offset + limit),
+            total: items.length,
+            page: Math.floor(offset / limit) + 1,
+            perPage: limit,
+            hasMore: offset + limit < items.length,
+          };
+        },
+        get: async (id: string) => items.find((p: any) => p.id === id) || null,
+        getBySlug: async (slug: string) => items.find((p: any) => p.slug === slug) || null,
+        create: async (data: any) => {
+          const product = { id: 'prod_' + String(counter++).padStart(3, '0'), ...data, createdAt: new Date(), updatedAt: new Date() };
+          items.push(product);
+          return product;
+        },
+        update: async (id: string, data: any) => {
+          const idx = items.findIndex((item: any) => item.id === id);
+          if (idx >= 0) {
+            items[idx] = { ...items[idx], ...data, updatedAt: new Date() };
+            return items[idx];
+          }
+          throw new Error('Product not found');
+        },
+        delete: async (id: string) => {
+          const idx = items.findIndex((item: any) => item.id === id);
+          if (idx >= 0) items.splice(idx, 1);
+        },
+        search: async () => [],
+      };
+    })(),
     cart: {
       get: async (sessionId) => carts[sessionId] || null,
       create: async (sessionId) => {
@@ -282,6 +310,106 @@ describe('Admin Routes', () => {
   it('should return 404 for non-existent order', async () => {
     const res = await app.request('/admin/orders/non-existent');
     expect(res.status).toBe(404);
+  });
+
+
+  it('should list products', async () => {
+    await database.products.create({
+      name: 'Test Widget',
+      slug: 'test-widget',
+      price: 1999,
+      status: 'active',
+      description: 'A test product',
+    });
+
+    const res = await app.request('/admin/products');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Products');
+    expect(html).toContain('Test Widget');
+    expect(html).toContain('test-widget');
+  });
+
+  it('should render product create form', async () => {
+    const res = await app.request('/admin/products/new');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Create Product');
+    expect(html).toContain('Name');
+    expect(html).toContain('Slug');
+    expect(html).toContain('Price');
+  });
+
+  it('should create a product from the admin form', async () => {
+    const res = await app.request('/admin/products', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'name=New+Widget&slug=new-widget&price=2999&status=active&description=New+desc',
+    });
+
+    expect(res.status).toBe(302);
+
+    const list = await database.products.list({ limit: 10 });
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0].name).toBe('New Widget');
+  });
+
+  it('should render product edit form', async () => {
+    const product = await database.products.create({
+      name: 'Editable Widget',
+      slug: 'editable-widget',
+      price: 999,
+      status: 'draft',
+      description: 'Editable',
+    });
+
+    const res = await app.request(`/admin/products/${product.id}/edit`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Edit Product');
+    expect(html).toContain('Editable Widget');
+  });
+
+  it('should update a product from the admin form', async () => {
+    const product = await database.products.create({
+      name: 'Old Name',
+      slug: 'old-name',
+      price: 999,
+      status: 'draft',
+      description: 'Old desc',
+    });
+
+    const res = await app.request(`/admin/products/${product.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'name=Updated+Name&slug=updated-name&price=1499&status=active&description=Updated+desc',
+    });
+
+    expect(res.status).toBe(302);
+
+    const updated = await database.products.get(product.id);
+    expect(updated?.name).toBe('Updated Name');
+    expect(updated?.price).toBe(1499);
+  });
+
+  it('should delete a product via HTMX', async () => {
+    const product = await database.products.create({
+      name: 'Deletable Widget',
+      slug: 'deletable-widget',
+      price: 599,
+      status: 'active',
+      description: 'To be deleted',
+    });
+
+    const res = await app.request(`/admin/products/${product.id}`, {
+      method: 'DELETE',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('HX-Redirect')).toBe('/admin/products');
+
+    const gone = await database.products.get(product.id);
+    expect(gone).toBeNull();
   });
 });
 
