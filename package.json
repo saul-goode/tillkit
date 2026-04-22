@@ -1,0 +1,29 @@
+{
+  "name": "@tillkit/root",
+  "private": true,
+  "version": "0.0.1",
+  "description": "TillKit - Open source e-commerce starter kit",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm recursive run build",
+    "dev": "pnpm --filter ./templates/starter dev",
+    "test": "pnpm recursive run test",
+    "test:watch": "pnpm --filter @tillkit/core test:watch",
+    "lint": "eslint packages --ext .ts,.js",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish",
+    "create-tillkit": "node packages/create-tillkit/bin/create-tillkit.js"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "@types/node": "^20.10.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.1.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

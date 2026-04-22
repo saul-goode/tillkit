@@ -1,0 +1,21 @@
+{
+  "name": "create-tillkit",
+  "version": "0.0.1",
+  "description": "Create a new TillKit project",
+  "type": "module",
+  "bin": {
+    "create-tillkit": "./bin/create-tillkit.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.7.0",
+    "picocolors": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}

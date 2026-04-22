@@ -1,0 +1,37 @@
+{
+  "name": "@tillkit/server",
+  "version": "0.0.1",
+  "description": "TillKit Hono server adapter",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tillkit/core": "workspace:*",
+    "hono": "^4.0.0"
+  },
+  "peerDependencies": {
+    "@tillkit/integration-stripe": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@tillkit/integration-stripe": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@tillkit/integration-stripe": "workspace:*",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.0.0"
+  }
+}
