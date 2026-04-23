@@ -109,7 +109,10 @@ function meilisearchProvider(config) {
       });
     },
     async update(product) {
-      await this.add(product);
+      await fetchMeilisearch(`/indexes/${indexName}/documents`, {
+        method: "POST",
+        body: JSON.stringify([product])
+      });
     }
   };
 }

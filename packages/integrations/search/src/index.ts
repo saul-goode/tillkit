@@ -175,7 +175,10 @@ export function meilisearchProvider(config: MeilisearchConfig): SearchProvider {
     },
     
     async update(product) {
-      await this.add(product); // Meilisearch upserts
+      await fetchMeilisearch(`/indexes/${indexName}/documents`, {
+        method: "POST",
+        body: JSON.stringify([product]),
+      });
     },
   };
 }

@@ -1,5 +1,11 @@
 import Stripe from 'stripe';
-import { Cart, Transaction } from '@tillkit/core';
+import { SubscriptionProvider, Cart, Transaction } from '@tillkit/core';
+
+interface StripeSubscriptionConfig {
+    secretKey: string;
+    webhookSecret?: string;
+}
+declare function createStripeSubscriptionProvider(config: StripeSubscriptionConfig): SubscriptionProvider;
 
 interface StripeConfig {
     provider: 'stripe';
@@ -104,4 +110,4 @@ declare function subscriptionIntegration(config: SubscriptionConfig): {
 };
 type SubscriptionIntegration = ReturnType<typeof subscriptionIntegration>;
 
-export { type CheckoutSession, type StripeConfig, type StripeEvent, type StripeIntegration, type SubscriptionConfig, type SubscriptionIntegration, type SubscriptionProduct, createOrGetCustomer, createSetupIntent, detachPaymentMethod, listPaymentMethods, stripeIntegration, subscriptionIntegration };
+export { type CheckoutSession, type StripeConfig, type StripeEvent, type StripeIntegration, type SubscriptionConfig, type SubscriptionIntegration, type SubscriptionProduct, createOrGetCustomer, createSetupIntent, createStripeSubscriptionProvider, detachPaymentMethod, listPaymentMethods, stripeIntegration, subscriptionIntegration };

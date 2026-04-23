@@ -186,6 +186,9 @@ importers:
       '@tillkit/integration-paypal':
         specifier: workspace:*
         version: link:../integrations/paypal
+      '@tillkit/integration-search':
+        specifier: workspace:*
+        version: link:../integrations/search
       hono:
         specifier: ^4.0.0
         version: 4.12.14
@@ -214,6 +217,9 @@ importers:
       '@tillkit/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@tillkit/integration-search':
+        specifier: workspace:*
+        version: link:../../packages/integrations/search
       '@tillkit/integration-stripe':
         specifier: workspace:*
         version: link:../../packages/integrations/stripe

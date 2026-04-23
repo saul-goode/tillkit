@@ -1,3 +1,4 @@
+import type { SubscriptionMetadata } from '../subscriptions/index.js';
 // Product Types
 export interface Product {
   id: string;
@@ -13,6 +14,7 @@ export interface Product {
   seo?: SeoMetadata;
   metadata?: Record<string, unknown>;
   status: 'draft' | 'active' | 'archived';
+  subscription?: SubscriptionMetadata; // Set this on recurring products
   createdAt: Date;
   updatedAt: Date;
 }

@@ -44,6 +44,22 @@ async function main() {
         p.outro(pc.yellow('Cancelled'));
         process.exit(0);
     }
+    const webhooks = await p.confirm({
+        message: 'Enable inventory webhooks? (notify external systems on stock changes)',
+        initialValue: false,
+    });
+    if (p.isCancel(webhooks)) {
+        p.outro(pc.yellow('Cancelled'));
+        process.exit(0);
+    }
+    const subscriptions = await p.confirm({
+        message: 'Enable subscription billing? (Stripe recurring payments)',
+        initialValue: false,
+    });
+    if (p.isCancel(subscriptions)) {
+        p.outro(pc.yellow('Cancelled'));
+        process.exit(0);
+    }
     const styling = await p.select({
         message: 'Choose your styling:',
         options: [
@@ -67,7 +83,8 @@ async function main() {
     const config = generateConfig({
         platform: platform,
         database: database,
-        styling: styling
+        styling: styling,
+        webhooks: webhooks,
     });
     fs.writeFileSync(path.join(targetDir, 'tillkit.config.ts'), config);
     // Update package.json
@@ -104,7 +121,7 @@ function copyTemplate(src, dest) {
         }
     }
 }
-function generateConfig({ platform, database, styling }) {
+function generateConfig({ platform, database, styling, webhooks, subscriptions }) {
     const imports = [];
     const adapterImports = [];
     if (database === 'pocketbase') {
@@ -117,8 +134,23 @@ function generateConfig({ platform, database, styling }) {
         imports.push("// TODO: Import Supabase adapter");
         adapterImports.push(`{ type: 'supabase' } // Configure me`);
     }
+    const webhookLines = webhooks ? `
+  // Inventory webhooks — POSTs to your endpoint on every stock change
+  inventoryWebhook: {
+    url: process.env.INVENTORY_WEBHOOK_URL || '',
+    secret: process.env.INVENTORY_WEBHOOK_SECRET || undefined,
+  },` : '';
+    const subscriptionLines = subscriptions ? `
+  // Subscription billing provider (Stripe only for now)
+  subscriptionProvider: process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET
+    ? createStripeSubscriptionProvider({
+        secretKey: process.env.STRIPE_SECRET_KEY,
+        webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+      })
+    : undefined,` : '';
     return `${imports.join('\n')}
 import { defineConfig } from '@tillkit/core';
+import { createStripeSubscriptionProvider } from '@tillkit/integration-stripe';
 
 export default defineConfig({
   database: ${adapterImports[0]},
@@ -127,7 +159,7 @@ export default defineConfig({
   },
   theme: {
     name: '${styling}',
-  },
+  },${webhookLines}${subscriptionLines}
   server: {
     port: parseInt(process.env.PORT || '3000'),
   },

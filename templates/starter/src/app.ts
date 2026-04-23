@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { createAdminRoutes } from '@tillkit/server';
+import { createAdminRoutes, createSubscriptionRoutes } from '@tillkit/server';
 import type { Cart, DatabaseAdapter, Product } from '@tillkit/core';
 import { formatPrice } from '@tillkit/core';
 import {
@@ -7,6 +7,8 @@ import {
   setSessionCookie,
   layout,
 } from './app-context.js';
+import type { SearchService } from '@tillkit/integration-search';
+import type { SubscriptionProvider } from '@tillkit/core';
 import { checkoutRouter } from './routes/checkout.js';
 import { webhooksRouter } from './routes/webhooks.js';
 
@@ -20,8 +22,10 @@ const __dirname = path.dirname(__filename);
 export function createStarterApp(deps: {
   database: DatabaseAdapter;
   stripe: any; // StripeIntegration | null — using any to avoid import complexity in factory
+  search?: SearchService;
+  subscriptionProvider?: SubscriptionProvider;
 }) {
-  const { database, stripe } = deps;
+  const { database, stripe, search, subscriptionProvider } = deps;
   const app = new Hono();
 
   // ===== HOME =====
@@ -48,9 +52,23 @@ export function createStarterApp(deps: {
   // ===== PRODUCTS =====
   app.get('/products', async (c) => {
     const query = c.req.query('q');
-    const products = query
-      ? { items: await database.products.search(query) }
-      : await database.products.list({ limit: 50 });
+    let products: any[];
+    let total = 0;
+
+    if (query && query.trim()) {
+      if (search) {
+        const result = await search.search(query, { page: 1, perPage: 50 });
+        products = result.items;
+        total = result.total;
+      } else {
+        products = await database.products.search(query);
+        total = products.length;
+      }
+    } else {
+      const result = await database.products.list({ limit: 50 });
+      products = result.items;
+      total = result.total;
+    }
 
     const html = layout(
       'Products',
@@ -59,12 +77,14 @@ export function createStarterApp(deps: {
       <form class="search" action="/products" method="get">
         <input type="search" name="q" value="${query || ''}" placeholder="Search products...">
         <button type="submit">Search</button>
+        ${query ? `<a href="/products" class="btn btn-sm">Clear</a>` : ''}
       </form>
       <div class="products">
-        ${products.items.length === 0
+        ${products.length === 0
           ? '<p class="empty">No products found.</p>'
-          : products.items.map((p: Product) => renderProductCard(p)).join('')}
+          : products.map((p: Product) => renderProductCard(p)).join('')}
       </div>
+      ${query ? `<p style="color:#666;font-size:0.85rem;">${total} result${total !== 1 ? 's' : ''} for "${query}"</p>` : ''}
     `,
     );
     return c.html(html);
@@ -288,7 +308,36 @@ export function createStarterApp(deps: {
   // ===== MOUNT SHARED ROUTERS =====
   app.route('/checkout', checkoutRouter);
   app.route('/webhooks', webhooksRouter);
-  app.route('/admin', createAdminRoutes({ database, basePath: '/admin' }));
+
+  // Search API
+  if (search) {
+    app.get('/api/search', async (c) => {
+      const q = c.req.query('q') || '';
+      const page = parseInt(c.req.query('page') || '1', 10);
+      const perPage = parseInt(c.req.query('perPage') || '20', 10);
+      
+      if (!q.trim()) {
+        return c.json({ items: [], total: 0, page, perPage });
+      }
+      
+      try {
+        const result = await search.search(q, { page, perPage });
+        return c.json(result);
+      } catch (err: any) {
+        console.error('Search API error:', err);
+        return c.json({ error: 'Search failed' }, 500);
+      }
+    });
+  }
+  app.route('/admin', createAdminRoutes({ database, basePath: '/admin', searchService: search }));
+
+  // Subscription API routes
+  if (subscriptionProvider) {
+    app.route('/api/subscriptions', createSubscriptionRoutes({
+      database,
+      subscriptionProvider,
+    }));
+  }
 
   // ===== SERVE ACTUAL CSS =====
   const cssPath = path.join(__dirname, 'styles.css');

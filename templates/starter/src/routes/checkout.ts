@@ -41,6 +41,10 @@ checkoutRouter.get('/success', async (c) => {
     stripe,
     sessionId: stripeSessionId,
     getSessionIdFn: () => getSessionId(c),
+    inventoryWebhook: process.env.INVENTORY_WEBHOOK_URL ? {
+      url: process.env.INVENTORY_WEBHOOK_URL,
+      secret: process.env.INVENTORY_WEBHOOK_SECRET || undefined,
+    } : undefined,
   });
 
   if (!orderId) {

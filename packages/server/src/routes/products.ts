@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import type { DatabaseAdapter } from '@tillkit/core';
+import type { SearchService } from '@tillkit/integration-search';
 
 // Create router for products
-export function createProductRoutes(db: DatabaseAdapter) {
+export function createProductRoutes(db: DatabaseAdapter, searchService?: SearchService) {
   const app = new Hono();
   
   // List products with filtering
@@ -21,13 +22,24 @@ export function createProductRoutes(db: DatabaseAdapter) {
     return c.json(result);
   });
   
-  // Search products
+  // Search products via SearchProvider (Meilisearch) if available, else fallback to DB
   app.get('/search', async (c) => {
     const query = c.req.query('q');
     if (!query) {
       return c.json({ items: [] });
     }
     
+    // If search service is configured, use it for ranked search
+    if (searchService) {
+      try {
+        const result = await searchService.search(query, { page: 1, perPage: 20 });
+        return c.json({ items: result.items, total: result.total });
+      } catch (err) {
+        console.error('Search service error, falling back to DB:', err);
+      }
+    }
+    
+    // Fallback to database search
     const products = await db.products.search(query);
     return c.json({ items: products });
   });
@@ -48,6 +60,9 @@ export function createProductRoutes(db: DatabaseAdapter) {
   app.post('/', async (c) => {
     const data = await c.req.json();
     const product = await db.products.create(data);
+    if (searchService) {
+      try { await searchService.sync(product, 'create'); } catch (e) { console.error('Search sync (create) failed:', e); }
+    }
     return c.json({ product }, 201);
   });
   
@@ -56,6 +71,9 @@ export function createProductRoutes(db: DatabaseAdapter) {
     const id = c.req.param('id');
     const data = await c.req.json();
     const product = await db.products.update(id, data);
+    if (searchService) {
+      try { await searchService.sync(product, 'update'); } catch (e) { console.error('Search sync (update) failed:', e); }
+    }
     return c.json({ product });
   });
   
@@ -63,6 +81,9 @@ export function createProductRoutes(db: DatabaseAdapter) {
   app.delete('/:id', async (c) => {
     const id = c.req.param('id');
     await db.products.delete(id);
+    if (searchService) {
+      try { await searchService.sync({ id } as any, 'delete'); } catch (e) { console.error('Search sync (delete) failed:', e); }
+    }
     return c.json({ success: true });
   });
   

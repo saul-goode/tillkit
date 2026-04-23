@@ -798,6 +798,76 @@ declare function defineConfig(config: TillKitConfig): TillKitConfig;
 /** Default feature flags for a new store */
 declare function getDefaultFeatures(): StoreFeatures;
 
+interface SubscriptionPlan {
+    id: string;
+    provider?: string;
+    name: string;
+    description?: string;
+    amount: number;
+    currency: string;
+    interval: 'month' | 'year' | 'week' | 'day';
+    intervalCount: number;
+}
+interface Subscription {
+    id: string;
+    customerId: string;
+    customerEmail: string;
+    status: 'incomplete' | 'active' | 'past_due' | 'canceled' | 'unpaid' | 'paused' | 'trialing';
+    plan: SubscriptionPlan;
+    currentPeriodStart: Date;
+    currentPeriodEnd: Date;
+    cancelAtPeriodEnd: boolean;
+    trialEnd?: Date;
+    metadata?: Record<string, string>;
+}
+interface CreateSubscriptionOptions {
+    customerId: string;
+    planId: string;
+    trialDays?: number;
+    paymentMethodId?: string;
+    metadata?: Record<string, string>;
+}
+interface SubscriptionProvider {
+    createSubscription(options: CreateSubscriptionOptions): Promise<{
+        id: string;
+        status: string;
+        clientSecret?: string;
+        approvalUrl?: string;
+        currentPeriodEnd: Date;
+    }>;
+    cancelSubscription(subscriptionId: string, immediately?: boolean): Promise<{
+        id: string;
+        status: string;
+        canceledAt?: Date;
+    }>;
+    updateSubscription(subscriptionId: string, newPlanId: string): Promise<{
+        id: string;
+        status: string;
+    }>;
+    getSubscription(subscriptionId: string): Promise<Subscription>;
+    handleWebhook(payload: string | Buffer, signature?: string): any;
+    processWebhookEvent(event: any): Promise<SubscriptionEvent>;
+}
+interface SubscriptionEvent {
+    type: 'subscription_created' | 'subscription_activated' | 'subscription_renewed' | 'subscription_canceled' | 'subscription_past_due' | 'payment_failed' | 'invoice_paid' | 'other';
+    subscriptionId: string;
+    customerId?: string;
+    data: Record<string, any>;
+}
+interface SubscriptionCheckoutSession {
+    id: string;
+    provider: 'stripe' | 'paypal';
+    url?: string;
+    clientSecret?: string;
+    approvalUrl?: string;
+}
+interface SubscriptionMetadata {
+    enabled: boolean;
+    plans: SubscriptionPlan[];
+    trialDays?: number;
+    description?: string;
+}
+
 interface Product {
     id: string;
     slug: string;
@@ -812,6 +882,7 @@ interface Product {
     seo?: SeoMetadata;
     metadata?: Record<string, unknown>;
     status: 'draft' | 'active' | 'archived';
+    subscription?: SubscriptionMetadata;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -1276,4 +1347,4 @@ declare const DiscountPresets: {
 };
 declare function createDiscountEngine(discounts?: Discount[]): DiscountEngine;
 
-export { type AddToCartInput, type Address, type AppliedDiscount, type Cart, type CartItem, type CartItemInput$1 as CartItemInput, CloudinaryImageConfig, type Collection, type Customer, type CustomerInput$1 as CustomerInput, type DatabaseAdapter, DatabaseConfig, type Discount$1 as Discount, DiscountEngine, DiscountPresets, type DiscountResult, type DiscountTarget, type DiscountType, ExternalImageConfig, type FulfillmentStatus, ImageConfig, type Inventory, type InventoryConfig, InventoryManager, type InventoryUpdate, type Order, type OrderInput$1 as OrderInput, type OrderItem, type OrderStatus, PaymentConfig, type PaymentStatus, type Product, type ProductImage, type ProductInput$1 as ProductInput, type ProductOption, type ProductVariant, type Discount as PromoDiscount, R2ImageConfig, type SeoMetadata, ServerConfig, type SetupResult, SharpImageConfig, type ShippingRate, type StockLevel, type StockReservation, StoreFeatures, StoreFeaturesSchema, StripeConfig, type TaxRate, ThemeConfig, type TillKitConfig, TillKitConfigSchema, type Transaction, type TransactionInput$1 as TransactionInput, addToCart, calculateCartTotals, calculateDiscount, calculateLineTotal, calculateOrderTotal, calculateShipping, calculateTax, clearCart, convertCurrency, createDiscountEngine, defineConfig, findVariantByOptions, formatCents, formatPrice, getAvailableInventory, getCartItemCount, getCompareAtPrice, getDefaultFeatures, getDiscountPercentage, getDisplayPrice, getOptionAvailability, inventoryFromProducts, isCartEmpty, isOnSale, isVariantAvailable, removeFromCart, updateCartItemQuantity };
+export { type AddToCartInput, type Address, type AppliedDiscount, type Cart, type CartItem, type CartItemInput$1 as CartItemInput, CloudinaryImageConfig, type Collection, type CreateSubscriptionOptions, type Customer, type CustomerInput$1 as CustomerInput, type DatabaseAdapter, DatabaseConfig, type Discount$1 as Discount, DiscountEngine, DiscountPresets, type DiscountResult, type DiscountTarget, type DiscountType, ExternalImageConfig, type FulfillmentStatus, ImageConfig, type Inventory, type InventoryConfig, InventoryManager, type InventoryUpdate, type Order, type OrderInput$1 as OrderInput, type OrderItem, type OrderStatus, PaymentConfig, type PaymentStatus, type Product, type ProductImage, type ProductInput$1 as ProductInput, type ProductOption, type ProductVariant, type Discount as PromoDiscount, R2ImageConfig, type SeoMetadata, ServerConfig, type SetupResult, SharpImageConfig, type ShippingRate, type StockLevel, type StockReservation, StoreFeatures, StoreFeaturesSchema, StripeConfig, type Subscription, type SubscriptionCheckoutSession, type SubscriptionEvent, type SubscriptionMetadata, type SubscriptionPlan, type SubscriptionProvider, type TaxRate, ThemeConfig, type TillKitConfig, TillKitConfigSchema, type Transaction, type TransactionInput$1 as TransactionInput, addToCart, calculateCartTotals, calculateDiscount, calculateLineTotal, calculateOrderTotal, calculateShipping, calculateTax, clearCart, convertCurrency, createDiscountEngine, defineConfig, findVariantByOptions, formatCents, formatPrice, getAvailableInventory, getCartItemCount, getCompareAtPrice, getDefaultFeatures, getDiscountPercentage, getDisplayPrice, getOptionAvailability, inventoryFromProducts, isCartEmpty, isOnSale, isVariantAvailable, removeFromCart, updateCartItemQuantity };

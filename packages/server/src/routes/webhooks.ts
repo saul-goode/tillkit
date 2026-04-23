@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
 import type { DatabaseAdapter } from '@tillkit/core';
 import type { StripeIntegration } from '@tillkit/integration-stripe';
+import { decrementInventoryForOrder } from '../inventory.js';
+import type { InventoryWebhookConfig } from '../inventory.js';
 
 export interface WebhookConfig {
   database: DatabaseAdapter;
   stripe: StripeIntegration;
   webhookSecret: string;
+  inventoryWebhook?: InventoryWebhookConfig;
   onPaymentSuccess?: (data: {
     orderId?: string;
     sessionId: string;
@@ -120,12 +123,14 @@ export async function createOrderFromStripeSession({
   sessionId,
   cartId,
   getSessionIdFn,
+  inventoryWebhook,
 }: {
   database: DatabaseAdapter;
   stripe: StripeIntegration;
   sessionId: string;
   cartId?: string;
   getSessionIdFn: () => string;
+  inventoryWebhook?: InventoryWebhookConfig;
 }): Promise<string | null> {
   try {
     // Get session details from Stripe
@@ -191,6 +196,9 @@ export async function createOrderFromStripeSession({
     
     // Clear the cart
     await database.cart.clear(actualCartId);
+    
+    // Decrement inventory
+    await decrementInventoryForOrder(database, order, inventoryWebhook);
     
     console.log('Order created:', order.orderNumber);
     return order.id;

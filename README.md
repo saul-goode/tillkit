@@ -226,11 +226,13 @@ MIT licensed. See [LICENSE](./LICENSE) for details.
 - [x] Admin dashboard
 - [x] Complete checkout flow
 - [ ] More payment providers (PayPal, etc.)
-- [ ] Inventory webhooks
-- [ ] Subscription billing
-- [ ] Multi-tenancy support
-- [ ] Admin product management
-- [ ] Search (Meilisearch)
+- [x] Inventory webhooks
+- [x] Subscription billing
+- [x] Admin product management
+- [x] Search (Meilisearch)
+
+> Multi-tenancy is a platform feature — out of scope for this starter kit.
+> Build it on top of TillKit if you need multi-store SaaS.
 
 ## 📬 Support
 

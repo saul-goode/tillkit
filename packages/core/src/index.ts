@@ -5,6 +5,15 @@ export * from './types/index.js';
 export * from './commerce/index.js';
 export * from './database/index.js';
 export * from './inventory/index.js';
+export type {
+  Subscription,
+  SubscriptionPlan,
+  SubscriptionProvider,
+  SubscriptionEvent,
+  SubscriptionCheckoutSession,
+  SubscriptionMetadata,
+  CreateSubscriptionOptions,
+} from './subscriptions/index.js';
 export { DiscountEngine, DiscountPresets, createDiscountEngine, type Discount as PromoDiscount, type AppliedDiscount, type DiscountResult, type DiscountType, type DiscountTarget } from './discounts/index.js';
 
 // Re-export DatabaseAdapter explicitly for external packages

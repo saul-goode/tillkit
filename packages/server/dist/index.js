@@ -1,9 +1,9 @@
 // src/index.ts
-import { Hono as Hono6 } from "hono";
+import { Hono as Hono8 } from "hono";
 
 // src/routes/products.ts
 import { Hono } from "hono";
-function createProductRoutes(db) {
+function createProductRoutes(db, searchService) {
   const app = new Hono();
   app.get("/", async (c) => {
     const query = c.req.query();
@@ -22,6 +22,14 @@ function createProductRoutes(db) {
     if (!query) {
       return c.json({ items: [] });
     }
+    if (searchService) {
+      try {
+        const result = await searchService.search(query, { page: 1, perPage: 20 });
+        return c.json({ items: result.items, total: result.total });
+      } catch (err) {
+        console.error("Search service error, falling back to DB:", err);
+      }
+    }
     const products = await db.products.search(query);
     return c.json({ items: products });
   });
@@ -36,24 +44,99 @@ function createProductRoutes(db) {
   app.post("/", async (c) => {
     const data = await c.req.json();
     const product = await db.products.create(data);
+    if (searchService) {
+      try {
+        await searchService.sync(product, "create");
+      } catch (e) {
+        console.error("Search sync (create) failed:", e);
+      }
+    }
     return c.json({ product }, 201);
   });
   app.patch("/:id", async (c) => {
     const id = c.req.param("id");
     const data = await c.req.json();
     const product = await db.products.update(id, data);
+    if (searchService) {
+      try {
+        await searchService.sync(product, "update");
+      } catch (e) {
+        console.error("Search sync (update) failed:", e);
+      }
+    }
     return c.json({ product });
   });
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");
     await db.products.delete(id);
+    if (searchService) {
+      try {
+        await searchService.sync({ id }, "delete");
+      } catch (e) {
+        console.error("Search sync (delete) failed:", e);
+      }
+    }
     return c.json({ success: true });
   });
   return app;
 }
 
-// src/routes/admin.ts
+// src/routes/subscriptions.ts
 import { Hono as Hono2 } from "hono";
+function createSubscriptionRoutes(config) {
+  const { subscriptionProvider: subs } = config;
+  const app = new Hono2();
+  app.post("/", async (c) => {
+    const body = await c.req.json();
+    try {
+      const result = await subs.createSubscription({
+        customerId: body.customerId,
+        planId: body.planId,
+        trialDays: body.trialDays,
+        paymentMethodId: body.paymentMethodId,
+        metadata: body.metadata
+      });
+      return c.json(result);
+    } catch (err) {
+      console.error("Subscription create error:", err);
+      return c.json({ error: err.message }, 400);
+    }
+  });
+  app.get("/:id", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const sub = await subs.getSubscription(id);
+      return c.json(sub);
+    } catch (err) {
+      return c.json({ error: err.message }, 404);
+    }
+  });
+  app.post("/:id/cancel", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const result = await subs.cancelSubscription(id, body.immediately);
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+  app.post("/:id/update", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    if (!body.planId) return c.json({ error: "planId required" }, 400);
+    try {
+      const result = await subs.updateSubscription(id, body.planId);
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+  return app;
+}
+
+// src/routes/admin.ts
+import { Hono as Hono3 } from "hono";
 function adminLayout(title, content, navActive) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -125,8 +208,8 @@ function formatCurrency(cents) {
   return "$" + (cents / 100).toFixed(2);
 }
 function createAdminRoutes(config) {
-  const { database: db, features = { variants: true, collections: false, inventoryTracking: true, subscriptions: false, multiCurrency: false } } = config;
-  const app = new Hono2();
+  const { database: db, features = { variants: true, collections: false, inventoryTracking: true, subscriptions: false, multiCurrency: false }, searchService } = config;
+  const app = new Hono3();
   app.get("/", async (c) => {
     const [ordersResult, productsResult] = await Promise.all([
       db.orders.list({ limit: 100 }),
@@ -266,13 +349,35 @@ function createAdminRoutes(config) {
   });
   app.get("/products", async (c) => {
     const page = parseInt(c.req.query("page") || "1");
-    const result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+    const q = c.req.query("q");
+    let result;
+    if (q && q.trim()) {
+      if (searchService) {
+        try {
+          const searchResult = await searchService.search(q, { page, perPage: 20 });
+          result = searchResult;
+        } catch (err) {
+          console.error("Admin product search failed:", err);
+          result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+        }
+      } else {
+        const products = await db.products.search(q);
+        result = { items: products, total: products.length, page, perPage: 20 };
+      }
+    } else {
+      result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+    }
     const content = `
       <div class="topbar">
         <h1>Products</h1>
         <a class="btn" href="/admin/products/new">Create Product</a>
       </div>
       <div class="card">
+        <form method="get" class="filters" action="/admin/products" style="margin-bottom:16px;">
+          <input type="search" name="q" value="${q || ""}" placeholder="Search products..." />
+          <button type="submit" class="btn btn-sm">Search</button>
+          ${q ? '<a href="/admin/products" class="btn btn-sm">Clear</a>' : ""}
+        </form>
         <table>
           <thead><tr><th>Name</th><th>Slug</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
@@ -375,7 +480,14 @@ function createAdminRoutes(config) {
       };
     }
     try {
-      await db.products.create(data);
+      const product = await db.products.create(data);
+      if (searchService) {
+        try {
+          await searchService.sync(product, "create");
+        } catch (e) {
+          console.error("Search sync (create) failed:", e);
+        }
+      }
       return c.redirect("/admin/products");
     } catch {
       return c.json({ error: "Failed to create product" }, 500);
@@ -474,7 +586,14 @@ function createAdminRoutes(config) {
       };
     }
     try {
-      await db.products.update(id, data);
+      const product = await db.products.update(id, data);
+      if (searchService) {
+        try {
+          await searchService.sync(product, "update");
+        } catch (e) {
+          console.error("Search sync (update) failed:", e);
+        }
+      }
       return c.redirect("/admin/products");
     } catch {
       return c.json({ error: "Failed to update product" }, 500);
@@ -484,6 +603,13 @@ function createAdminRoutes(config) {
     const id = c.req.param("id");
     try {
       await db.products.delete(id);
+      if (searchService) {
+        try {
+          await searchService.sync({ id }, "delete");
+        } catch (e) {
+          console.error("Search sync (delete) failed:", e);
+        }
+      }
       c.header("HX-Redirect", "/admin/products");
       return c.body("");
     } catch {
@@ -493,10 +619,99 @@ function createAdminRoutes(config) {
   return app;
 }
 
+// src/routes/search.ts
+import { Hono as Hono4 } from "hono";
+import { createSearchService } from "@tillkit/integration-search";
+import { createSearchProvider } from "@tillkit/integration-search";
+function createSearchRoutes(searchConfig) {
+  const search = createSearchService(searchConfig.provider);
+  const app = new Hono4();
+  app.get("/", async (c) => {
+    const query = c.req.query("q") || "";
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const perPage = parseInt(c.req.query("perPage") || "20", 10);
+    const status = c.req.query("status");
+    const sort = c.req.query("sort");
+    if (!query.trim()) {
+      return c.json({ items: [], total: 0, page, perPage });
+    }
+    try {
+      const result = await search.search(query, {
+        page,
+        perPage,
+        filters: status ? { status } : void 0,
+        sort
+      });
+      return c.json(result);
+    } catch (err) {
+      console.error("Search error:", err);
+      return c.json({ error: "Search failed", message: err?.message }, 500);
+    }
+  });
+  return app;
+}
+
+// src/index.ts
+import { createSearchService as createSearchService2 } from "@tillkit/integration-search";
+
 // src/routes/webhooks.ts
-import { Hono as Hono3 } from "hono";
+import { Hono as Hono5 } from "hono";
+
+// src/inventory.ts
+async function decrementInventoryForOrder(db, order, webhookConfig) {
+  if (!order.items || order.items.length === 0) return;
+  for (const item of order.items) {
+    const product = await db.products.get(item.productId);
+    if (!product || !product.inventory) continue;
+    const oldAvailable = product.inventory.available ?? product.inventory.quantity ?? 0;
+    const newAvailable = Math.max(0, oldAvailable - item.quantity);
+    await db.products.update(product.id, {
+      inventory: {
+        ...product.inventory,
+        available: newAvailable,
+        quantity: product.inventory.quantity ?? oldAvailable
+      }
+    });
+    if (webhookConfig) {
+      try {
+        await sendInventoryWebhook(webhookConfig, {
+          productId: product.id,
+          variantId: item.variantId,
+          sku: item.sku || product.slug,
+          oldAvailable,
+          newAvailable,
+          delta: -item.quantity,
+          reason: "order_paid",
+          orderId: order.id,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      } catch (e) {
+        console.error("Inventory webhook failed:", e);
+      }
+    }
+  }
+}
+async function sendInventoryWebhook(config, event) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...config.headers
+  };
+  if (config.secret) {
+    headers["X-Inventory-Webhook-Secret"] = config.secret;
+  }
+  const response = await fetch(config.url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(event)
+  });
+  if (!response.ok) {
+    throw new Error(`Inventory webhook returned ${response.status}: ${await response.text()}`);
+  }
+}
+
+// src/routes/webhooks.ts
 function createWebhookRoutes(config) {
-  const router = new Hono3();
+  const router = new Hono5();
   router.post("/stripe", async (c) => {
     const payload = await c.req.text();
     const signature = c.req.header("stripe-signature") || "";
@@ -552,7 +767,8 @@ async function createOrderFromStripeSession({
   stripe,
   sessionId,
   cartId,
-  getSessionIdFn
+  getSessionIdFn,
+  inventoryWebhook
 }) {
   try {
     const session = await stripe.getSession(sessionId);
@@ -607,6 +823,7 @@ async function createOrderFromStripeSession({
       }
     });
     await database.cart.clear(actualCartId);
+    await decrementInventoryForOrder(database, order, inventoryWebhook);
     console.log("Order created:", order.orderNumber);
     return order.id;
   } catch (err) {
@@ -616,9 +833,9 @@ async function createOrderFromStripeSession({
 }
 
 // src/routes/paypal-webhooks.ts
-import { Hono as Hono4 } from "hono";
+import { Hono as Hono6 } from "hono";
 function createPayPalWebhookRoutes(config) {
-  const router = new Hono4();
+  const router = new Hono6();
   router.post("/paypal", async (c) => {
     const payload = await c.req.text();
     try {
@@ -713,7 +930,7 @@ async function createOrderFromPayPalCapture({
 }
 
 // src/routes/auth.ts
-import { Hono as Hono5 } from "hono";
+import { Hono as Hono7 } from "hono";
 function createSessionMiddleware(_secret) {
   return async (c, next) => {
     const cookie = c.req.header("cookie") || "";
@@ -824,7 +1041,7 @@ var authLayout = (title, content, error) => `<!DOCTYPE html>
 </body>
 </html>`;
 function createAuthRoutes(config) {
-  const router = new Hono5();
+  const router = new Hono7();
   router.use("*", createSessionMiddleware(config.sessionSecret));
   router.get("/login", async (c) => {
     const redirect = c.req.query("redirect") || "/";
@@ -1312,7 +1529,7 @@ function createTheme(name, baseTheme, overrides) {
 
 // src/index.ts
 function createHonoApp(config) {
-  const app = new Hono6();
+  const app = new Hono8();
   const features = config.features || {
     variants: true,
     collections: false,
@@ -1320,6 +1537,7 @@ function createHonoApp(config) {
     subscriptions: false,
     multiCurrency: false
   };
+  const searchService = config.search?.provider ? createSearchService2(config.search.provider) : void 0;
   app.use("*", async (c, next) => {
     const start = Date.now();
     await next();
@@ -1329,21 +1547,32 @@ function createHonoApp(config) {
   app.get("/health", (c) => c.json({
     status: "ok",
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    features
+    features,
+    search: config.search?.enabled ?? !!searchService
   }));
-  app.route("/api/products", createProductRoutes(config.database));
+  if (config.subscriptionProvider) {
+    app.route("/api/subscriptions", createSubscriptionRoutes({
+      database: config.database,
+      subscriptionProvider: config.subscriptionProvider
+    }));
+  }
+  if (searchService) {
+    app.route("/api/search", createSearchRoutes(config.search));
+  }
+  app.route("/api/products", createProductRoutes(config.database, searchService));
   if (config.enableAdmin !== false) {
     const adminPath = config.adminPath || "/admin";
     app.route(adminPath, createAdminRoutes({
       database: config.database,
       basePath: adminPath,
-      features
+      features,
+      searchService
     }));
   }
   return app;
 }
 export {
-  Hono6 as Hono,
+  Hono8 as Hono,
   ThemeManager,
   boutiqueTheme,
   createAdminRoutes,
@@ -1353,9 +1582,12 @@ export {
   createOrderFromStripeSession,
   createPayPalWebhookRoutes,
   createProductRoutes,
+  createSearchProvider,
   createSessionMiddleware,
+  createSubscriptionRoutes,
   createTheme,
   createWebhookRoutes,
+  decrementInventoryForOrder,
   defaultRadii,
   defaultShadows,
   defaultSpacing,

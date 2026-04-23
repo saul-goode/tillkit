@@ -1,16 +1,25 @@
 import { Hono } from 'hono';
-import type { DatabaseAdapter, StoreFeatures } from '@tillkit/core';
+import type { DatabaseAdapter, StoreFeatures, SubscriptionProvider } from '@tillkit/core';
 import { createProductRoutes } from './routes/products.js';
+import { createSubscriptionRoutes } from './routes/subscriptions.js';
 import { createAdminRoutes } from './routes/admin.js';
+import { createSearchRoutes, type SearchConfig } from './routes/search.js';
+import { createSearchService } from '@tillkit/integration-search';
 
-// Create fully-configured TillKit Hono app
-export function createHonoApp(config: {
+export type { SearchConfig } from './routes/search.js';
+export { createSearchProvider } from './routes/search.js';
+
+export interface HonoAppConfig {
   database: DatabaseAdapter;
+  subscriptionProvider?: SubscriptionProvider;
   features?: StoreFeatures;
   sessionSecret?: string;
   enableAdmin?: boolean;
   adminPath?: string;
-}) {
+  search?: SearchConfig;
+}
+
+export function createHonoApp(config: HonoAppConfig) {
   const app = new Hono();
 
   const features = config.features || {
@@ -20,6 +29,11 @@ export function createHonoApp(config: {
     subscriptions: false,
     multiCurrency: false,
   };
+
+  // Optional search service
+  const searchService = config.search?.provider
+    ? createSearchService(config.search.provider)
+    : undefined;
 
   // Middleware for request logging
   app.use('*', async (c, next) => {
@@ -34,10 +48,24 @@ export function createHonoApp(config: {
     status: 'ok',
     timestamp: new Date().toISOString(),
     features,
+    search: config.search?.enabled ?? !!searchService,
   }));
 
-  // Product routes
-  app.route('/api/products', createProductRoutes(config.database));
+  // Subscription routes
+  if (config.subscriptionProvider) {
+    app.route("/api/subscriptions", createSubscriptionRoutes({
+      database: config.database,
+      subscriptionProvider: config.subscriptionProvider,
+    }));
+  }
+
+  // Search API routes
+  if (searchService) {
+    app.route('/api/search', createSearchRoutes(config.search!));
+  }
+
+  // Product routes (with search sync if available)
+  app.route('/api/products', createProductRoutes(config.database, searchService));
 
   // Admin routes (optional)
   if (config.enableAdmin !== false) {
@@ -46,6 +74,7 @@ export function createHonoApp(config: {
       database: config.database,
       basePath: adminPath,
       features,
+      searchService,
     }));
   }
 
@@ -53,10 +82,13 @@ export function createHonoApp(config: {
 }
 
 // Export route factories
+export { createSubscriptionRoutes } from './routes/subscriptions.js';
 export { createProductRoutes, createAdminRoutes };
 export { createWebhookRoutes, createOrderFromStripeSession } from './routes/webhooks.js';
 export { createPayPalWebhookRoutes, createOrderFromPayPalCapture } from './routes/paypal-webhooks.js';
 export { createAuthRoutes, requireAuth, createSessionMiddleware } from './routes/auth.js';
+export type { InventoryWebhookConfig } from './inventory.js';
+export { decrementInventoryForOrder } from './inventory.js';
 
 // Export themes
 export * from './themes/index.js';

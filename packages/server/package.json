@@ -19,7 +19,8 @@
   "dependencies": {
     "@tillkit/core": "workspace:*",
     "hono": "^4.0.0",
-    "@tillkit/integration-paypal": "workspace:*"
+    "@tillkit/integration-paypal": "workspace:*",
+    "@tillkit/integration-search": "workspace:*"
   },
   "peerDependencies": {
     "@tillkit/integration-stripe": "workspace:*"

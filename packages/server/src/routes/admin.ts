@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
 import type { DatabaseAdapter, StoreFeatures } from '@tillkit/core';
+import type { SearchService } from '@tillkit/integration-search';
 
 export interface AdminConfig {
   database: DatabaseAdapter;
   basePath: string;
   features?: StoreFeatures;
+  searchService?: SearchService;
 }
+
 
 function adminLayout(title: string, content: string, navActive?: string) {
   return `<!DOCTYPE html>
@@ -80,7 +83,7 @@ function formatCurrency(cents: number): string {
 }
 
 export function createAdminRoutes(config: AdminConfig) {
-  const { database: db, features = { variants: true, collections: false, inventoryTracking: true, subscriptions: false, multiCurrency: false } } = config;
+  const { database: db, features = { variants: true, collections: false, inventoryTracking: true, subscriptions: false, multiCurrency: false }, searchService } = config;
   const app = new Hono();
 
   // Dashboard
@@ -233,13 +236,35 @@ export function createAdminRoutes(config: AdminConfig) {
   // Products list
   app.get('/products', async (c) => {
     const page = parseInt(c.req.query('page') || '1');
-    const result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+    const q = c.req.query('q');
+    let result;
+    if (q && q.trim()) {
+      if (searchService) {
+        try {
+          const searchResult = await searchService.search(q, { page, perPage: 20 });
+          result = searchResult;
+        } catch (err) {
+          console.error('Admin product search failed:', err);
+          result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+        }
+      } else {
+        const products = await db.products.search(q);
+        result = { items: products, total: products.length, page, perPage: 20 };
+      }
+    } else {
+      result = await db.products.list({ limit: 20, offset: (page - 1) * 20 });
+    }
     const content = `
       <div class="topbar">
         <h1>Products</h1>
         <a class="btn" href="/admin/products/new">Create Product</a>
       </div>
       <div class="card">
+        <form method="get" class="filters" action="/admin/products" style="margin-bottom:16px;">
+          <input type="search" name="q" value="${q || ''}" placeholder="Search products..." />
+          <button type="submit" class="btn btn-sm">Search</button>
+          ${q ? '<a href="/admin/products" class="btn btn-sm">Clear</a>' : ''}
+        </form>
         <table>
           <thead><tr><th>Name</th><th>Slug</th><th>Price</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
@@ -346,7 +371,10 @@ export function createAdminRoutes(config: AdminConfig) {
       };
     }
     try {
-      await db.products.create(data);
+      const product = await db.products.create(data);
+      if (searchService) {
+        try { await searchService.sync(product, 'create'); } catch (e) { console.error('Search sync (create) failed:', e); }
+      }
       return c.redirect('/admin/products');
     } catch {
       return c.json({ error: 'Failed to create product' }, 500);
@@ -449,7 +477,10 @@ export function createAdminRoutes(config: AdminConfig) {
       };
     }
     try {
-      await db.products.update(id, data);
+      const product = await db.products.update(id, data);
+      if (searchService) {
+        try { await searchService.sync(product, 'update'); } catch (e) { console.error('Search sync (update) failed:', e); }
+      }
       return c.redirect('/admin/products');
     } catch {
       return c.json({ error: 'Failed to update product' }, 500);
@@ -461,6 +492,9 @@ export function createAdminRoutes(config: AdminConfig) {
     const id = c.req.param('id');
     try {
       await db.products.delete(id);
+      if (searchService) {
+        try { await searchService.sync({ id } as any, 'delete'); } catch (e) { console.error('Search sync (delete) failed:', e); }
+      }
       c.header('HX-Redirect', '/admin/products');
       return c.body('');
     } catch {

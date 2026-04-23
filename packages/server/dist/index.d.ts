@@ -1,23 +1,46 @@
 import * as hono_types from 'hono/types';
 import { Hono } from 'hono';
 export { Hono, Hono as HonoApp } from 'hono';
-import { DatabaseAdapter, StoreFeatures } from '@tillkit/core';
+import { DatabaseAdapter, StoreFeatures, SubscriptionProvider, Order } from '@tillkit/core';
+import { SearchService, SearchProvider } from '@tillkit/integration-search';
+export { createSearchProvider } from '@tillkit/integration-search';
 import { StripeIntegration } from '@tillkit/integration-stripe';
 import { PayPalIntegration } from '@tillkit/integration-paypal';
 
-declare function createProductRoutes(db: DatabaseAdapter): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
+declare function createProductRoutes(db: DatabaseAdapter, searchService?: SearchService): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 
 interface AdminConfig {
     database: DatabaseAdapter;
     basePath: string;
     features?: StoreFeatures;
+    searchService?: SearchService;
 }
 declare function createAdminRoutes(config: AdminConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
+
+interface SearchConfig {
+    provider: SearchProvider;
+    enabled?: boolean;
+}
+
+interface SubscriptionRouteConfig {
+    database: DatabaseAdapter;
+    subscriptionProvider: SubscriptionProvider;
+}
+declare function createSubscriptionRoutes(config: SubscriptionRouteConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
+
+interface InventoryWebhookConfig {
+    url: string;
+    secret?: string;
+    headers?: Record<string, string>;
+}
+/** Decrement inventory for each item in a paid order, optionally sending webhooks */
+declare function decrementInventoryForOrder(db: DatabaseAdapter, order: Order, webhookConfig?: InventoryWebhookConfig): Promise<void>;
 
 interface WebhookConfig {
     database: DatabaseAdapter;
     stripe: StripeIntegration;
     webhookSecret: string;
+    inventoryWebhook?: InventoryWebhookConfig;
     onPaymentSuccess?: (data: {
         orderId?: string;
         sessionId: string;
@@ -40,12 +63,13 @@ interface WebhookConfig {
     }) => Promise<void> | void;
 }
 declare function createWebhookRoutes(config: WebhookConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
-declare function createOrderFromStripeSession({ database, stripe, sessionId, cartId, getSessionIdFn, }: {
+declare function createOrderFromStripeSession({ database, stripe, sessionId, cartId, getSessionIdFn, inventoryWebhook, }: {
     database: DatabaseAdapter;
     stripe: StripeIntegration;
     sessionId: string;
     cartId?: string;
     getSessionIdFn: () => string;
+    inventoryWebhook?: InventoryWebhookConfig;
 }): Promise<string | null>;
 
 interface PayPalWebhookConfig {
@@ -200,13 +224,16 @@ declare const themeManager: ThemeManager;
 declare function getThemeStyles(themeName?: string): string;
 declare function createTheme(name: string, baseTheme: Theme, overrides: Partial<Theme>): Theme;
 
-declare function createHonoApp(config: {
+interface HonoAppConfig {
     database: DatabaseAdapter;
+    subscriptionProvider?: SubscriptionProvider;
     features?: StoreFeatures;
     sessionSecret?: string;
     enableAdmin?: boolean;
     adminPath?: string;
-}): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
+    search?: SearchConfig;
+}
+declare function createHonoApp(config: HonoAppConfig): Hono<hono_types.BlankEnv, hono_types.BlankSchema, "/">;
 
 declare module 'hono' {
     interface ContextVariableMap {
@@ -216,4 +243,4 @@ declare module 'hono' {
     }
 }
 
-export { type Theme, type ThemeColors, ThemeManager, type ThemeRadii, type ThemeShadows, type ThemeSpacing, type ThemeTypography, boutiqueTheme, createAdminRoutes, createAuthRoutes, createHonoApp, createOrderFromPayPalCapture, createOrderFromStripeSession, createPayPalWebhookRoutes, createProductRoutes, createSessionMiddleware, createTheme, createWebhookRoutes, defaultRadii, defaultShadows, defaultSpacing, defaultTypography, generateCSSVariables, generateInlineThemeCSS, generateThemeCSS, getThemeStyles, minimalTheme, modernTheme, requireAuth, themeManager, themes };
+export { type HonoAppConfig, type InventoryWebhookConfig, type SearchConfig, type Theme, type ThemeColors, ThemeManager, type ThemeRadii, type ThemeShadows, type ThemeSpacing, type ThemeTypography, boutiqueTheme, createAdminRoutes, createAuthRoutes, createHonoApp, createOrderFromPayPalCapture, createOrderFromStripeSession, createPayPalWebhookRoutes, createProductRoutes, createSessionMiddleware, createSubscriptionRoutes, createTheme, createWebhookRoutes, decrementInventoryForOrder, defaultRadii, defaultShadows, defaultSpacing, defaultTypography, generateCSSVariables, generateInlineThemeCSS, generateThemeCSS, getThemeStyles, minimalTheme, modernTheme, requireAuth, themeManager, themes };

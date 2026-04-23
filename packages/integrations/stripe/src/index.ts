@@ -464,3 +464,6 @@ export function subscriptionIntegration(config: SubscriptionConfig) {
 }
 
 export type SubscriptionIntegration = ReturnType<typeof subscriptionIntegration>;
+
+// Unified SubscriptionProvider adapter
+export { createStripeSubscriptionProvider } from './subscriptions.js';
