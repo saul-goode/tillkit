@@ -65,5 +65,21 @@ export function createSubscriptionRoutes(config: SubscriptionRouteConfig) {
     }
   });
 
+
+  // Webhook for billing events (invoice.payment_succeeded, customer.subscription.deleted, etc.)
+  app.post('/webhook', async (c) => {
+    const payload = await c.req.text();
+    const signature = c.req.header('stripe-signature') || '';
+    try {
+      const event = subs.handleWebhook(payload, signature);
+      const result = await subs.processWebhookEvent(event);
+      console.log('Subscription webhook:', result.type, result.subscriptionId);
+      return c.json({ received: true, type: result.type, subscriptionId: result.subscriptionId });
+    } catch (err: any) {
+      console.error('Subscription webhook error:', err.message);
+      return c.json({ error: 'Invalid webhook' }, 400);
+    }
+  });
+
   return app;
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { createAdminRoutes } from '../routes/admin.js';
 import { createWebhookRoutes, createOrderFromStripeSession } from '../routes/webhooks.js';
+import { createSubscriptionRoutes } from '../routes/subscriptions.js';
 import type { DatabaseAdapter, Order, Cart } from '@tillkit/core';
 import type { StripeIntegration } from '@tillkit/integration-stripe';
 
@@ -549,5 +550,118 @@ describe('createOrderFromStripeSession', () => {
     });
     
     expect(orderId).toBeNull();
+  });
+});
+
+
+describe('createSubscriptionRoutes', () => {
+  let db: DatabaseAdapter;
+  let app: Hono;
+
+  beforeEach(() => {
+    db = createMockDatabase();
+    app = createSubscriptionRoutes({
+      database: db,
+      subscriptionProvider: {
+        async createSubscription(options) {
+          return {
+            id: 'sub_test_123',
+            status: 'incomplete',
+            clientSecret: 'secret_abc',
+            currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          };
+        },
+        async cancelSubscription(id, immediately) {
+          return { id, status: immediately ? 'canceled' : 'active', canceledAt: immediately ? new Date() : undefined };
+        },
+        async updateSubscription(id, newPlanId) {
+          return { id, status: 'active' };
+        },
+        async getSubscription(id) {
+          return {
+            id,
+            customerId: 'cus_test',
+            customerEmail: 'test@example.com',
+            status: 'active',
+            plan: {
+              id: 'plan_test',
+              name: 'Pro',
+              amount: 999,
+              currency: 'USD',
+              interval: 'month' as any,
+              intervalCount: 1,
+            },
+            currentPeriodStart: new Date(),
+            currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            cancelAtPeriodEnd: false,
+          };
+        },
+        handleWebhook(payload: string | Buffer, signature?: string) {
+          return { type: 'invoice.payment_succeeded' };
+        },
+        async processWebhookEvent(event: any) {
+          return {
+            type: 'invoice_paid' as any,
+            subscriptionId: 'sub_test_123',
+            data: event,
+          };
+        },
+      },
+    });
+  });
+
+  it('POST / should create a subscription', async () => {
+    const res = await app.request('/', {
+      method: 'POST',
+      body: JSON.stringify({ customerId: 'cus_1', planId: 'price_1', trialDays: 7 }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.id).toBe('sub_test_123');
+    expect(json.clientSecret).toBe('secret_abc');
+  });
+
+  it('GET /:id should return a subscription', async () => {
+    const res = await app.request('/sub_test_123', { method: 'GET' });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.id).toBe('sub_test_123');
+    expect(json.plan.name).toBe('Pro');
+  });
+
+  it('POST /:id/cancel should cancel a subscription', async () => {
+    const res = await app.request('/sub_test_123/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ immediately: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe('canceled');
+  });
+
+  it('POST /:id/update should update a subscription plan', async () => {
+    const res = await app.request('/sub_test_123/update', {
+      method: 'POST',
+      body: JSON.stringify({ planId: 'price_premium' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe('active');
+  });
+
+  it('POST /webhook should receive and process webhook', async () => {
+    const res = await app.request('/webhook', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'evt_test' }),
+      headers: { 'Content-Type': 'application/json', 'stripe-signature': 'sig_test' },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.received).toBe(true);
+    expect(json.type).toBe('invoice_paid');
+    expect(json.subscriptionId).toBe('sub_test_123');
   });
 });
