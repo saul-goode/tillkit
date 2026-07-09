@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { createAdminRoutes } from '../routes/admin.js';
 import { createWebhookRoutes, createOrderFromStripeSession } from '../routes/webhooks.js';
 import { createSubscriptionRoutes } from '../routes/subscriptions.js';
-import type { DatabaseAdapter, Order, Cart } from '@tillkit/core';
+import type { DatabaseAdapter, Order } from '@tillkit/core';
 import type { StripeIntegration } from '@tillkit/integration-stripe';
 
 // Mock database adapter
@@ -495,7 +495,7 @@ describe('createOrderFromStripeSession', () => {
   
   it('should create order from Stripe session', async () => {
     // Create a cart first
-    const cart = await database.cart.create('test-session');
+    await database.cart.create('test-session');
     await database.cart.addItem('test-session', {
       productId: 'prod_1',
       name: 'Test Product',
@@ -563,7 +563,7 @@ describe('createSubscriptionRoutes', () => {
     app = createSubscriptionRoutes({
       database: db,
       subscriptionProvider: {
-        async createSubscription(options) {
+        async createSubscription(_options) {
           return {
             id: 'sub_test_123',
             status: 'incomplete',
@@ -574,7 +574,7 @@ describe('createSubscriptionRoutes', () => {
         async cancelSubscription(id, immediately) {
           return { id, status: immediately ? 'canceled' : 'active', canceledAt: immediately ? new Date() : undefined };
         },
-        async updateSubscription(id, newPlanId) {
+        async updateSubscription(id, _newPlanId) {
           return { id, status: 'active' };
         },
         async getSubscription(id) {
@@ -596,7 +596,7 @@ describe('createSubscriptionRoutes', () => {
             cancelAtPeriodEnd: false,
           };
         },
-        handleWebhook(payload: string | Buffer, signature?: string) {
+        handleWebhook(_payload: string | Buffer, _signature?: string) {
           return { type: 'invoice.payment_succeeded' };
         },
         async processWebhookEvent(event: any) {

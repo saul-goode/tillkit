@@ -384,7 +384,7 @@ export function generateThemeCSS(theme: Theme): string {
 
 // Inline theme CSS for emails/other uses
 export function generateInlineThemeCSS(theme: Theme, mode: 'light' | 'dark' = 'light'): string {
-  return generateCSSVariables(theme, mode).replace(/\n  /g, '; ').replace(/^  /, '');
+  return generateCSSVariables(theme, mode).replace(/\n {2}/g, '; ').replace(/^ {2}/, '');
 }
 
 // Theme manager for runtime switching

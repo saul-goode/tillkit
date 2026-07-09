@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // Helper to create minimal mock data
 const createProductMock = (overrides: any = {}) => ({

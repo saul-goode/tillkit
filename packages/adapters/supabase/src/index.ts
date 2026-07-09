@@ -1,5 +1,5 @@
 // Supabase Database Adapter for TillKit
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import type { DatabaseAdapter, StoreFeatures } from '@tillkit/core';
 import type { SetupResult } from '@tillkit/core';
 

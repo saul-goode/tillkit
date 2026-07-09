@@ -114,16 +114,6 @@ export function easypostProvider(config: EasyPostConfig): ShippingProvider {
     };
   }
   
-  function formatPackage(pkg: Package) {
-    return {
-      weight: pkg.weight,
-      ...(pkg.length && { length: pkg.length }),
-      ...(pkg.width && { width: pkg.width }),
-      ...(pkg.height && { height: pkg.height }),
-      ...(pkg.value && { value: pkg.value / 100 }), // cents to dollars
-    };
-  }
-  
   function mapServiceLevel(service: string): ShippingRate['serviceLevel'] {
     const serviceLower = service.toLowerCase();
     if (serviceLower.includes('overnight') || serviceLower.includes('next') || serviceLower.includes('express')) {

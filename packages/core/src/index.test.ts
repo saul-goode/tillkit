@@ -7,10 +7,7 @@ import {
   formatCents,
   convertCurrency,
 } from '../src/commerce/pricing.js';
-import {
-  defineConfig,
-  TillKitConfigSchema,
-} from '../src/config.js';
+import { defineConfig } from '../src/config.js';
 
 describe('Pricing Utilities', () => {
   describe('calculateTax', () => {

@@ -123,7 +123,6 @@ export async function createOrderFromPayPalCapture({
       currency: capture.currency?.toUpperCase() || 'USD',
       // shippingAddress omitted: cart has no shippingAddress
       shippingAddress: { address1: '', city: '', postalCode: '', country: '' },
-      // @ts-ignore
       notes: '',
       metadata: { paypalOrderId: orderId },
     });

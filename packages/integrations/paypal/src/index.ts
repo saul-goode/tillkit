@@ -1,4 +1,4 @@
-import type { Cart, Order, Transaction } from '@tillkit/core';
+import type { Cart, Transaction } from '@tillkit/core';
 
 export interface PayPalConfig {
   provider: 'paypal';
@@ -198,7 +198,7 @@ export function paypalIntegration(config: PayPalConfig) {
     // Verify webhook signature
     handleWebhook(
       body: string | Buffer,
-      headers: Record<string, string | string[] | undefined>
+      _headers: Record<string, string | string[] | undefined>
     ): any {
       // PayPal webhook verification requires calling their verify API
       // For simplicity, forward to processWebhookEvent which the app can call
