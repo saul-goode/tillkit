@@ -18,3 +18,8 @@ export { DiscountEngine, DiscountPresets, createDiscountEngine, type Discount as
 
 // Re-export DatabaseAdapter explicitly for external packages
 export type { DatabaseAdapter } from './database/index.js';
+export {
+  DUPLICATE_GATEWAY_REF,
+  DuplicateGatewayRefError,
+  isDuplicateGatewayRefError,
+} from './database/index.js';

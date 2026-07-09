@@ -31,8 +31,8 @@ pnpm monorepo. Packages under `packages/`, reference storefront under `templates
 
 - [x] T001 [P] Add `.specify/feature.json` to `.gitignore` (per-developer spec-kit state, not shared)
 - [ ] T002 [P] Initialize changesets (`pnpm changeset init`) so the breaking `handleWebhook` signature change can be recorded in `.changeset/`
-- [ ] T003 [P] Add a `test` script (`vitest run`) to `packages/adapters/pocketbase/package.json` and `packages/adapters/supabase/package.json` — neither defines one today, so adapter tests would never run in CI
-- [ ] T004 Create the shared adapter contract suite skeleton in `packages/adapters/__tests__/contract.test.ts`, exporting a `runContractTests(adapterFactory, name)` harness that both adapters invoke, plus `packages/adapters/vitest.config.ts`
+- [x] T003 [P] Add a `test` script (`vitest run`) to `packages/adapters/pocketbase/package.json` and `packages/adapters/supabase/package.json` — neither defines one today, so adapter tests would never run in CI
+- [x] T004 Create the shared adapter contract suite skeleton in `packages/adapters/__tests__/contract.test.ts`, exporting a `runContractTests(adapterFactory, name)` harness that both adapters invoke, plus `packages/adapters/vitest.config.ts`
 
 **Checkpoint**: `pnpm test` discovers adapter tests (currently zero exist).
 
@@ -48,33 +48,33 @@ pnpm monorepo. Packages under `packages/`, reference storefront under `templates
 
 ### Contract tests (write first, must fail)
 
-- [ ] T005 [P] Write contract tests 1–3 (`getByGatewayRef` hit/miss; duplicate `(gateway, gatewayRef)` throws `DUPLICATE_GATEWAY_REF`; two `gateway: null` orders coexist) in `packages/adapters/__tests__/contract.test.ts`
-- [ ] T006 [P] Write contract tests 4, 6, 7 (`claim` once/`claimed:false` thereafter; `release` makes an event re-claimable; same `eventId` under different gateways does not collide) in `packages/adapters/__tests__/contract.test.ts`
-- [ ] T007 Write contract test 5 — **concurrency**: `Promise.all` of 10 simultaneous `claim` calls with one key yields exactly one `claimed: true` — in `packages/adapters/__tests__/contract.test.ts`. This is the test that fails against a read-then-write implementation.
-- [ ] T008 [P] Write contract test 8 (`setup()` reports only what it actually created; Supabase must not return `created: true` having executed no DDL) in `packages/adapters/__tests__/contract.test.ts`
+- [x] T005 [P] Write contract tests 1–3 (`getByGatewayRef` hit/miss; duplicate `(gateway, gatewayRef)` throws `DUPLICATE_GATEWAY_REF`; two `gateway: null` orders coexist) in `packages/adapters/__tests__/contract.test.ts`
+- [x] T006 [P] Write contract tests 4, 6, 7 (`claim` once/`claimed:false` thereafter; `release` makes an event re-claimable; same `eventId` under different gateways does not collide) in `packages/adapters/__tests__/contract.test.ts`
+- [x] T007 Write contract test 5 — **concurrency**: `Promise.all` of 10 simultaneous `claim` calls with one key yields exactly one `claimed: true` — in `packages/adapters/__tests__/contract.test.ts`. This is the test that fails against a read-then-write implementation.
+- [x] T008 [P] Write contract test 8 (`setup()` reports only what it actually created; Supabase must not return `created: true` having executed no DDL) in `packages/adapters/__tests__/contract.test.ts`
 
 ### Core contract
 
-- [ ] T009 [P] Add `gateway` and `gatewayRef` (both nullable) to `Order`, and add the `ProcessedWebhookEvent` entity, in `packages/core/src/types/index.ts` per [data-model.md](./data-model.md)
-- [ ] T010 Add `orders.getByGatewayRef(gateway, ref)`, the `webhookEvents` namespace (`claim`/`complete`/`release`/`get`), and optional `gateway`/`gatewayRef` on `OrderInput` to `packages/core/src/database/index.ts` per [contracts/database-adapter.md](./contracts/database-adapter.md); export a `DUPLICATE_GATEWAY_REF` error code constant from `packages/core/src/index.ts`
+- [x] T009 [P] Add `gateway` and `gatewayRef` (both nullable) to `Order`, and add the `ProcessedWebhookEvent` entity, in `packages/core/src/types/index.ts` per [data-model.md](./data-model.md)
+- [x] T010 Add `orders.getByGatewayRef(gateway, ref)`, the `webhookEvents` namespace (`claim`/`complete`/`release`/`get`), and optional `gateway`/`gatewayRef` on `OrderInput` to `packages/core/src/database/index.ts` per [contracts/database-adapter.md](./contracts/database-adapter.md); export a `DUPLICATE_GATEWAY_REF` error code constant from `packages/core/src/index.ts`
 
 ### PocketBase adapter
 
-- [ ] T011 Fix the decorative unique constraints in `packages/adapters/pocketbase/src/index.ts` `setup()`: field-level `unique: true` (lines ~389, ~418, ~457) has been a no-op since PocketBase v0.14. Replace with an `indexes` array creating `idx_orders_number` on `orders(orderNumber)` and `idx_products_slug` on `products(slug)`
-- [ ] T012 Extend `setup()` in `packages/adapters/pocketbase/src/index.ts` to add `orders.gateway`/`orders.gatewayRef` fields plus `CREATE UNIQUE INDEX idx_orders_gateway_ref ON orders (gateway, gatewayRef)`, and to provision the `processed_webhook_events` collection with `CREATE UNIQUE INDEX idx_webhook_events ON processed_webhook_events (gateway, eventId)`
-- [ ] T013 Implement `orders.getByGatewayRef` and duplicate-detection in `orders.create` (catch `ClientResponseError` `status === 400`, confirm via re-read, rethrow if the re-read misses so non-conflict 400s are never swallowed) in `packages/adapters/pocketbase/src/index.ts`
-- [ ] T014 Implement the `webhookEvents` namespace in `packages/adapters/pocketbase/src/index.ts` as a constrained insert with 400-catch + confirming read (composite indexes may omit `validation_not_unique`)
+- [x] T011 Fix the decorative unique constraints in `packages/adapters/pocketbase/src/index.ts` `setup()`: field-level `unique: true` (lines ~389, ~418, ~457) has been a no-op since PocketBase v0.14. Replace with an `indexes` array creating `idx_orders_number` on `orders(orderNumber)` and `idx_products_slug` on `products(slug)`
+- [x] T012 Extend `setup()` in `packages/adapters/pocketbase/src/index.ts` to add `orders.gateway`/`orders.gatewayRef` fields plus `CREATE UNIQUE INDEX idx_orders_gateway_ref ON orders (gateway, gatewayRef)`, and to provision the `processed_webhook_events` collection with `CREATE UNIQUE INDEX idx_webhook_events ON processed_webhook_events (gateway, eventId)`
+- [x] T013 Implement `orders.getByGatewayRef` and duplicate-detection in `orders.create` (catch `ClientResponseError` `status === 400`, confirm via re-read, rethrow if the re-read misses so non-conflict 400s are never swallowed) in `packages/adapters/pocketbase/src/index.ts`
+- [x] T014 Implement the `webhookEvents` namespace in `packages/adapters/pocketbase/src/index.ts` as a constrained insert with 400-catch + confirming read (composite indexes may omit `validation_not_unique`)
 
 ### Supabase adapter
 
-- [ ] T015 [P] Implement `orders.getByGatewayRef` and duplicate-detection in `orders.create` (`error.code === '23505'` → `DUPLICATE_GATEWAY_REF`) in `packages/adapters/supabase/src/index.ts`
-- [ ] T016 [P] Implement the `webhookEvents` namespace in `packages/adapters/supabase/src/index.ts` using `.upsert(row, { onConflict: 'gateway,event_id', ignoreDuplicates: true }).select()` — empty `data` means already existed, one row means this call claimed it
-- [ ] T017 Correct `setup()` in `packages/adapters/supabase/src/index.ts` to stop reporting `created: true` when it executed no DDL; return the required SQL in its result so callers can surface it
+- [x] T015 [P] Implement `orders.getByGatewayRef` and duplicate-detection in `orders.create` (`error.code === '23505'` → `DUPLICATE_GATEWAY_REF`) in `packages/adapters/supabase/src/index.ts`
+- [x] T016 [P] Implement the `webhookEvents` namespace in `packages/adapters/supabase/src/index.ts` using `.upsert(row, { onConflict: 'gateway,event_id', ignoreDuplicates: true }).select()` — empty `data` means already existed, one row means this call claimed it
+- [x] T017 Correct `setup()` in `packages/adapters/supabase/src/index.ts` to stop reporting `created: true` when it executed no DDL; return the required SQL in its result so callers can surface it
 
 ### Migration and schema delivery
 
-- [ ] T018 Create the additive, idempotent migration script at `templates/starter/scripts/migrate.ts` and register `"migrate": "tsx scripts/migrate.ts"` in `templates/starter/package.json`. PocketBase: apply missing fields/indexes via `pb.collections.update()`. Supabase: print the DDL (the adapter cannot execute it). Re-running must be a clean no-op.
-- [ ] T019 [P] Add the Postgres DDL from [data-model.md](./data-model.md#schema-delivery) (`gateway_ref` column, both unique indexes, `processed_webhook_events` table) to the Supabase section of `docs/deployment.md`
+- [x] T018 Create the additive, idempotent migration script at `templates/starter/scripts/migrate.ts` and register `"migrate": "tsx scripts/migrate.ts"` in `templates/starter/package.json`. PocketBase: apply missing fields/indexes via `pb.collections.update()`. Supabase: print the DDL (the adapter cannot execute it). Re-running must be a clean no-op.
+- [x] T019 [P] Add the Postgres DDL from [data-model.md](./data-model.md#schema-delivery) (`gateway_ref` column, both unique indexes, `processed_webhook_events` table) to the Supabase section of `docs/deployment.md`
 
 **Checkpoint**: Contract tests T005–T008 pass against **both** adapters. Foundation ready; US2 unblocked.
 

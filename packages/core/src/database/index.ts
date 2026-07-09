@@ -1,11 +1,38 @@
 // Database adapter interface - all database adapters implement this
-import type { 
-  Product, 
-  Cart, 
-  Order, 
+import type {
+  Product,
+  Cart,
+  Order,
   Customer,
+  PaymentGateway,
+  ProcessedWebhookEvent,
 } from '../types/index.js';
 import type { StoreFeatures } from '../config.js';
+
+/**
+ * Error code an adapter MUST surface when an insert violates the unique
+ * (gateway, gatewayRef) constraint. Callers use insert-and-catch rather than
+ * check-then-insert: the success page and the webhook race in production, so a
+ * read-then-write check has a TOCTOU window.
+ */
+export const DUPLICATE_GATEWAY_REF = 'DUPLICATE_GATEWAY_REF';
+
+/** Thrown by `orders.create` when `(gateway, gatewayRef)` already exists. */
+export class DuplicateGatewayRefError extends Error {
+  readonly code = DUPLICATE_GATEWAY_REF;
+  constructor(gateway: string, gatewayRef: string) {
+    super(`An order already exists for ${gateway} reference ${gatewayRef}`);
+    this.name = 'DuplicateGatewayRefError';
+  }
+}
+
+export function isDuplicateGatewayRefError(err: unknown): err is DuplicateGatewayRefError {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: string }).code === DUPLICATE_GATEWAY_REF
+  );
+}
 
 /** Setup result from database adapter initialization */
 export interface SetupResult {
@@ -61,6 +88,9 @@ interface CartItemInput {
 interface OrderInput {
   customerId?: string;
   email: string;
+  /** Gateway + its payment reference. Together they make creation idempotent. */
+  gateway?: PaymentGateway;
+  gatewayRef?: string;
   status?: 'pending' | 'confirmed' | 'paid' | 'fulfilled' | 'shipped' | 'delivered' | 'cancelled' | 'refunded';
   paymentStatus?: 'pending' | 'authorized' | 'paid' | 'partially_refunded' | 'refunded' | 'failed';
   fulfillmentStatus?: 'unfulfilled' | 'partially_fulfilled' | 'fulfilled' | 'returned';
@@ -128,10 +158,54 @@ export interface DatabaseAdapter {
     list(options?: QueryOptions): Promise<PaginatedResult<Order>>;
     get(id: string): Promise<Order | null>;
     getByNumber(orderNumber: string): Promise<Order | null>;
+    /**
+     * Look up an order by the gateway's payment reference (Stripe session id,
+     * PayPal order id). Returns null on miss; never throws for a miss.
+     *
+     * NOTE: this is NOT `getByNumber` — `orderNumber` is TillKit's own
+     * human-facing identifier and has nothing to do with any gateway.
+     */
+    getByGatewayRef(gateway: PaymentGateway, ref: string): Promise<Order | null>;
+    /** Throws `DuplicateGatewayRefError` when `(gateway, gatewayRef)` exists. */
     create(data: OrderInput): Promise<Order>;
     update(id: string, data: Partial<OrderInput>): Promise<Order>;
     addTransaction(orderId: string, transaction: TransactionInput): Promise<Order>;
     updateStatus(id: string, status: Order['status']): Promise<Order>;
+  };
+
+  /**
+   * Exactly-once ledger for gateway webhook deliveries.
+   *
+   * `claim` MUST be a single constrained insert whose conflict is detected —
+   * never a read followed by a write.
+   */
+  webhookEvents: {
+    /**
+     * Atomically claim an event for processing.
+     * Returns `{ claimed: true }` to exactly one caller; every other caller for
+     * the same `(gateway, eventId)` gets `{ claimed: false, existing }`.
+     */
+    claim(event: {
+      gateway: PaymentGateway;
+      eventId: string;
+      eventType: string;
+    }): Promise<{ claimed: boolean; existing?: ProcessedWebhookEvent }>;
+
+    /** Record the outcome of a successfully-processed event. */
+    complete(
+      gateway: PaymentGateway,
+      eventId: string,
+      result: { outcome: 'processed' | 'ignored'; orderId?: string }
+    ): Promise<void>;
+
+    /**
+     * Drop a claim so a redelivery can retry it. MUST be called when a handler
+     * fails after claiming, otherwise that payment's side effects are lost
+     * forever: the gateway retries, the claim blocks it, nothing ever runs.
+     */
+    release(gateway: PaymentGateway, eventId: string): Promise<void>;
+
+    get(gateway: PaymentGateway, eventId: string): Promise<ProcessedWebhookEvent | null>;
   };
   
   // Customers

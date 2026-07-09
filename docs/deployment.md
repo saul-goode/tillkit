@@ -312,6 +312,46 @@ CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_customers_email ON customers(email);
 ```
 
+### Payment idempotency (required)
+
+These constraints are what make order creation exactly-once under webhook
+redelivery and success-page refresh. **Without them TillKit still runs, but
+idempotency fails open**: duplicate orders are created and nothing appears
+wrong. The Supabase adapter cannot execute DDL over PostgREST, so you must
+apply this yourself. It is idempotent — safe to re-run.
+
+```sql
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS gateway text;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS gateway_ref text;
+
+-- Partial: manually-created orders have a NULL gateway_ref and must never
+-- conflict with each other.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_gateway_ref
+  ON orders (gateway, gateway_ref) WHERE gateway_ref IS NOT NULL;
+
+-- orderNumber uniqueness was previously declared but never enforced.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_number ON orders (order_number);
+
+-- Exactly-once ledger for gateway webhook deliveries.
+CREATE TABLE IF NOT EXISTS processed_webhook_events (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  gateway      text NOT NULL,
+  event_id     text NOT NULL,
+  event_type   text NOT NULL,
+  outcome      text NOT NULL,
+  order_id     uuid REFERENCES orders(id),
+  processed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_events
+  ON processed_webhook_events (gateway, event_id);
+```
+
+Existing PocketBase stores get the equivalent automatically:
+
+```bash
+pnpm migrate   # additive, idempotent; safe to re-run
+```
+
 ### 4. Development
 
 ```bash

@@ -100,13 +100,27 @@ A developer lists products with `{ limit, offset, sort, order, filters }` and se
 
 ## Known Gaps
 
-- Supabase `setup()` is a no-op that reports success; docs/deployment.md compensates with manual SQL. Either execute DDL (e.g. via a SQL function) or return an explicit "manual setup required" result with the SQL — never claim `created: true` falsely.
-- Supabase `cart.updateItem` hardcodes `line_total = quantity * 100` (comment admits "Will recalc actual price").
+Fixed under spec 018 (verified against a live PocketBase v0.22.47):
+
+- ~~Supabase `setup()` is a no-op that reports success~~ — now returns `created: false`, `createdCollections: []`, and a `requiredSql` array. Contract case 8 enforces this.
+- ~~Supabase `cart.updateItem` hardcodes `line_total = quantity * 100`~~ — now computes from the item's real unit price (FR-006).
+- ~~No shared adapter contract test suite exists~~ — `packages/adapters/__tests__/contract.ts`, run against both adapters (live PocketBase in CI; Supabase env-gated).
+- ~~Order-number collision is unhandled~~ — and it was worse than documented. See below.
+
+Discovered while implementing 018:
+
+- **PocketBase field-level `unique: true` is silently ignored** (removed in v0.14; the SDK drops the unknown key). The adapter declared it on `orders.orderNumber`, `products.slug`, and `collections.slug` — **none were enforced**. Empirically confirmed: a legacy store accepts duplicate order numbers. Uniqueness now comes from an `indexes` array. Existing stores must run `pnpm migrate`.
+- **PocketBase `setup()` never worked against a real server.** JSON fields require `options.maxSize` and select fields require `options.maxSelect` + `options.values`; the adapter passed `values` at the top level, so every `collections.create` failed with `validation_required`. This is why `TEST_RUNBOOK.md` instructs users to build collections by hand. Fixed.
+- **The PocketBase SDK auto-cancels concurrent identical requests**, rejecting the earlier one with `status: 0`. On a server this is wrong: the success-page and webhook paths legitimately issue the same insert concurrently, and one would be cancelled rather than either winning or hitting the unique index. The adapter now sets `autoCancellation(false)`.
+- **PocketBase text fields store `''`, never `NULL`.** A plain composite unique index on `(gateway, gatewayRef)` therefore makes the second manual order collide with the first. Partial indexes (`WHERE gatewayRef != ''`) are required.
+
+Still open:
+
+- The adapter emits the PocketBase **v0.22 `schema:` format**, renamed to `fields:` in v0.23. TillKit cannot provision a store on any PocketBase ≥ 0.23 (current release: 0.39.x). This is a hard compatibility ceiling and needs its own spec.
 - Supabase `orders.update` doesn't snake_case its payload — camelCase updates target nonexistent columns.
 - PocketBase escapes only double quotes in filters; Supabase escapes nothing in `search()`.
 - Cart-item removal threshold differs (`<= 0` vs `=== 0`).
-- Order-number collision is unhandled in both adapters.
-- No shared adapter contract test suite exists; parity is unenforced.
+- The Supabase half of the contract suite is env-gated and therefore unverified in CI; parity is asserted from the contract, not demonstrated.
 
 ## Existing Implementation (reference)
 

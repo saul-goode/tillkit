@@ -1,6 +1,76 @@
 import PocketBase from 'pocketbase';
-import type { Product, Cart, Order, Customer, DatabaseAdapter, StoreFeatures } from '@tillkit/core';
+import type {
+  Product,
+  Cart,
+  Order,
+  Customer,
+  DatabaseAdapter,
+  StoreFeatures,
+  PaymentGateway,
+  ProcessedWebhookEvent,
+} from '@tillkit/core';
 import type { SetupResult } from '@tillkit/core';
+import { DuplicateGatewayRefError } from '@tillkit/core';
+
+/** PocketBase surfaces unique-index violations as a 400 ClientResponseError. */
+function isPocketBaseStatus(err: unknown, status: number): boolean {
+  return typeof err === 'object' && err !== null && (err as { status?: number }).status === status;
+}
+
+/**
+ * Unique indexes, shared by `setup()` (fresh stores) and `tillkit migrate`
+ * (existing stores) so the two can never drift.
+ *
+ * PocketBase ignores field-level `unique: true` — it was removed in v0.14 and
+ * the SDK silently drops the unknown key. Uniqueness only exists if it appears
+ * here.
+ *
+ * The gatewayRef index is PARTIAL. PocketBase text fields store `''`, never
+ * NULL, so a plain composite index would make the second manually-created order
+ * (`gateway: ''`, `gatewayRef: ''`) collide with the first.
+ */
+export const PRODUCT_INDEXES = {
+  slug: 'CREATE UNIQUE INDEX `idx_products_slug` ON `products` (`slug`)',
+} as const;
+
+export const ORDER_INDEXES = {
+  orderNumber: 'CREATE UNIQUE INDEX `idx_orders_number` ON `orders` (`orderNumber`)',
+  gatewayRef:
+    "CREATE UNIQUE INDEX `idx_orders_gateway_ref` ON `orders` (`gateway`, `gatewayRef`) WHERE `gatewayRef` != ''",
+} as const;
+
+export const WEBHOOK_EVENT_INDEXES = {
+  gatewayEventId:
+    'CREATE UNIQUE INDEX `idx_webhook_events` ON `processed_webhook_events` (`gateway`, `eventId`)',
+} as const;
+
+/**
+ * Field builders for the PocketBase v0.22 schema format.
+ *
+ * PocketBase validates `options` per field type and rejects the collection
+ * outright when they are missing: `json` requires `maxSize`, `select` requires
+ * `maxSelect` and `values`. Passing `values` at the top level (as this adapter
+ * previously did) silently produces `validation_required` on save — which is
+ * why `setup()` never actually worked and the docs told users to build
+ * collections by hand.
+ */
+const JSON_MAX_SIZE = 2_000_000;
+
+const text = (name: string, required = false) => ({ name, type: 'text', required, options: {} });
+const number = (name: string, required = false) => ({ name, type: 'number', required, options: {} });
+const email = (name: string, required = false) => ({ name, type: 'email', required, options: {} });
+const json = (name: string, required = false) => ({
+  name,
+  type: 'json',
+  required,
+  options: { maxSize: JSON_MAX_SIZE },
+});
+const select = (name: string, values: string[], required = false) => ({
+  name,
+  type: 'select',
+  required,
+  options: { maxSelect: 1, values },
+});
 
 // Local types matching the DatabaseAdapter interface
 interface QueryOptions {
@@ -47,6 +117,9 @@ interface CartItemInput {
 interface OrderInput {
   customerId?: string;
   email: string;
+  /** Gateway + payment reference; together the idempotency key for creation. */
+  gateway?: PaymentGateway;
+  gatewayRef?: string;
   status?: 'pending' | 'confirmed' | 'paid' | 'fulfilled' | 'shipped' | 'delivered' | 'cancelled' | 'refunded';
   paymentStatus?: 'pending' | 'authorized' | 'paid' | 'partially_refunded' | 'refunded' | 'failed';
   fulfillmentStatus?: 'unfulfilled' | 'partially_fulfilled' | 'fulfilled' | 'returned';
@@ -94,6 +167,13 @@ export interface PocketbaseAdapterConfig {
 
 export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdapter {
   const pb = new PocketBase(config.url);
+
+  // The SDK auto-cancels an in-flight request when an identical one starts,
+  // rejecting the earlier with `status: 0`. That is wrong for a server: the
+  // success-page and webhook paths legitimately issue the same create
+  // concurrently, and one of them would be cancelled rather than either
+  // succeeding or hitting the unique index.
+  pb.autoCancellation(false);
 
   // Auth if credentials provided
   if (config.adminToken) {
@@ -284,19 +364,39 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         }
       },
 
+      async getByGatewayRef(gateway: PaymentGateway, ref: string): Promise<Order | null> {
+        const records = await pb.collection('orders').getFullList({
+          filter: `gateway="${escapeFilter(gateway)}" && gatewayRef="${escapeFilter(ref)}"`,
+          expand: 'items,transactions',
+          limit: 1,
+        });
+        return (records[0] as unknown as Order) ?? null;
+      },
+
       async create(data: OrderInput): Promise<Order> {
         // Generate order number
         const date = new Date();
         const orderNumber = `TK-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-        const record = await pb.collection('orders').create({
-          ...data,
-          orderNumber,
-          status: data.status || 'pending',
-          paymentStatus: data.paymentStatus || 'pending',
-          fulfillmentStatus: data.fulfillmentStatus || 'unfulfilled',
-        });
-        return record as unknown as Order;
+        try {
+          const record = await pb.collection('orders').create({
+            ...data,
+            orderNumber,
+            status: data.status || 'pending',
+            paymentStatus: data.paymentStatus || 'pending',
+            fulfillmentStatus: data.fulfillmentStatus || 'unfulfilled',
+          });
+          return record as unknown as Order;
+        } catch (err) {
+          // A 400 here may be the unique (gateway, gatewayRef) index rejecting a
+          // concurrent duplicate — or any other validation failure. Confirm by
+          // re-reading before classifying, so unrelated 400s are never swallowed.
+          if (isPocketBaseStatus(err, 400) && data.gateway && data.gatewayRef) {
+            const existing = await this.getByGatewayRef(data.gateway, data.gatewayRef);
+            if (existing) throw new DuplicateGatewayRefError(data.gateway, data.gatewayRef);
+          }
+          throw err;
+        }
       },
 
       async update(id: string, data: Partial<OrderInput>): Promise<Order> {
@@ -368,6 +468,68 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
       },
     },
 
+    // Exactly-once webhook ledger
+    webhookEvents: {
+      async claim(event: {
+        gateway: PaymentGateway;
+        eventId: string;
+        eventType: string;
+      }): Promise<{ claimed: boolean; existing?: ProcessedWebhookEvent }> {
+        try {
+          // A single constrained insert. The unique (gateway, eventId) index
+          // decides the winner — not a prior read, which would race.
+          await pb.collection('processed_webhook_events').create({
+            gateway: event.gateway,
+            eventId: event.eventId,
+            eventType: event.eventType,
+            outcome: 'processed',
+            processedAt: new Date().toISOString(),
+          });
+          return { claimed: true };
+        } catch (err) {
+          if (!isPocketBaseStatus(err, 400)) throw err;
+          // Composite unique indexes do not always populate a per-field
+          // `validation_not_unique` code, so confirm by reading.
+          const existing = await this.get(event.gateway, event.eventId);
+          if (!existing) throw err;
+          return { claimed: false, existing };
+        }
+      },
+
+      async complete(
+        gateway: PaymentGateway,
+        eventId: string,
+        result: { outcome: 'processed' | 'ignored'; orderId?: string }
+      ): Promise<void> {
+        const record = await findWebhookEventRecord(pb, gateway, eventId);
+        if (!record) return;
+        await pb.collection('processed_webhook_events').update(record.id, {
+          outcome: result.outcome,
+          orderId: result.orderId ?? '',
+        });
+      },
+
+      async release(gateway: PaymentGateway, eventId: string): Promise<void> {
+        const record = await findWebhookEventRecord(pb, gateway, eventId);
+        if (!record) return;
+        await pb.collection('processed_webhook_events').delete(record.id);
+      },
+
+      async get(gateway: PaymentGateway, eventId: string): Promise<ProcessedWebhookEvent | null> {
+        const record = await findWebhookEventRecord(pb, gateway, eventId);
+        if (!record) return null;
+        return {
+          id: record.id,
+          gateway: record.gateway,
+          eventId: record.eventId,
+          eventType: record.eventType,
+          outcome: record.outcome,
+          orderId: record.orderId || undefined,
+          processedAt: new Date(record.processedAt ?? record.created),
+        };
+      },
+    },
+
     // Setup — create collections based on enabled features
     async setup(features: StoreFeatures): Promise<SetupResult> {
       const createdCollections: string[] = [];
@@ -386,25 +548,32 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
       // Products collection — always required
       if (!await collectionExists('products')) {
         const fields: any[] = [
-          { name: 'slug', type: 'text', required: true, unique: true },
-          { name: 'name', type: 'text', required: true },
-          { name: 'description', type: 'text' },
-          { name: 'price', type: 'number', required: true },
-          { name: 'compareAtPrice', type: 'number' },
-          { name: 'images', type: 'json' },
-          { name: 'inventory', type: 'json' },
-          { name: 'seo', type: 'json' },
-          { name: 'metadata', type: 'json' },
-          { name: 'status', type: 'select', required: true, values: ['draft', 'active', 'archived'] },
+          // NOTE: field-level `unique: true` is silently ignored by PocketBase
+          // (removed in v0.14). Uniqueness must come from the `indexes` array.
+          text('slug', true),
+          text('name', true),
+          text('description'),
+          number('price', true),
+          number('compareAtPrice'),
+          json('images'),
+          json('inventory'),
+          json('seo'),
+          json('metadata'),
+          select('status', ['draft', 'active', 'archived'], true),
         ];
 
         // Variant fields only if enabled
         if (features.variants) {
-          fields.push({ name: 'variants', type: 'json' });
-          fields.push({ name: 'options', type: 'json' });
+          fields.push(json('variants'));
+          fields.push(json('options'));
         }
 
-        await pb.collections.create({ name: 'products', type: 'base', schema: fields });
+        await pb.collections.create({
+          name: 'products',
+          type: 'base',
+          schema: fields,
+          indexes: [PRODUCT_INDEXES.slug],
+        });
         createdCollections.push('products');
         created = true;
       }
@@ -415,13 +584,14 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
           name: 'collections',
           type: 'base',
           schema: [
-            { name: 'slug', type: 'text', required: true, unique: true },
-            { name: 'name', type: 'text', required: true },
-            { name: 'description', type: 'text' },
-            { name: 'image', type: 'json' },
-            { name: 'seo', type: 'json' },
-            { name: 'sortOrder', type: 'number', required: true },
+            text('slug', true),
+            text('name', true),
+            text('description'),
+            json('image'),
+            json('seo'),
+            number('sortOrder', true),
           ],
+          indexes: ['CREATE UNIQUE INDEX `idx_collections_slug` ON `collections` (`slug`)'],
         });
         createdCollections.push('collections');
         created = true;
@@ -433,15 +603,15 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
           name: 'carts',
           type: 'base',
           schema: [
-            { name: 'sessionId', type: 'text', required: true },
-            { name: 'customerId', type: 'text' },
-            { name: 'items', type: 'json' },
-            { name: 'subtotal', type: 'number' },
-            { name: 'totalTax', type: 'number' },
-            { name: 'totalShipping', type: 'number' },
-            { name: 'totalDiscount', type: 'number' },
-            { name: 'total', type: 'number' },
-            { name: 'currency', type: 'text' },
+            text('sessionId', true),
+            text('customerId'),
+            json('items'),
+            number('subtotal'),
+            number('totalTax'),
+            number('totalShipping'),
+            number('totalDiscount'),
+            number('total'),
+            text('currency'),
           ],
         });
         createdCollections.push('carts');
@@ -454,27 +624,49 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
           name: 'orders',
           type: 'base',
           schema: [
-            { name: 'orderNumber', type: 'text', required: true, unique: true },
-            { name: 'customerId', type: 'text' },
-            { name: 'email', type: 'text', required: true },
-            { name: 'status', type: 'select', required: true, values: ['pending', 'confirmed', 'paid', 'fulfilled', 'shipped', 'delivered', 'cancelled', 'refunded'] },
-            { name: 'paymentStatus', type: 'select', required: true, values: ['pending', 'authorized', 'paid', 'partially_refunded', 'refunded', 'failed'] },
-            { name: 'fulfillmentStatus', type: 'select', required: true, values: ['unfulfilled', 'partially_fulfilled', 'fulfilled', 'returned'] },
-            { name: 'items', type: 'json' },
-            { name: 'subtotal', type: 'number' },
-            { name: 'totalTax', type: 'number' },
-            { name: 'totalShipping', type: 'number' },
-            { name: 'totalDiscount', type: 'number' },
-            { name: 'total', type: 'number' },
-            { name: 'currency', type: 'text' },
-            { name: 'shippingAddress', type: 'json' },
-            { name: 'billingAddress', type: 'json' },
-            { name: 'transactions', type: 'json' },
-            { name: 'notes', type: 'text' },
-            { name: 'metadata', type: 'json' },
+            text('orderNumber', true),
+            text('customerId'),
+            text('email', true),
+            select('status', ['pending', 'confirmed', 'paid', 'fulfilled', 'shipped', 'delivered', 'cancelled', 'refunded'], true),
+            select('paymentStatus', ['pending', 'authorized', 'paid', 'partially_refunded', 'refunded', 'failed'], true),
+            select('fulfillmentStatus', ['unfulfilled', 'partially_fulfilled', 'fulfilled', 'returned'], true),
+            json('items'),
+            number('subtotal'),
+            number('totalTax'),
+            number('totalShipping'),
+            number('totalDiscount'),
+            number('total'),
+            text('currency'),
+            json('shippingAddress'),
+            json('billingAddress'),
+            json('transactions'),
+            text('notes'),
+            json('metadata'),
+            text('gateway'),
+            text('gatewayRef'),
           ],
+          indexes: [ORDER_INDEXES.orderNumber, ORDER_INDEXES.gatewayRef],
         });
         createdCollections.push('orders');
+        created = true;
+      }
+
+      // Webhook ledger — makes redelivery a no-op
+      if (!await collectionExists('processed_webhook_events')) {
+        await pb.collections.create({
+          name: 'processed_webhook_events',
+          type: 'base',
+          schema: [
+            text('gateway', true),
+            text('eventId', true),
+            text('eventType', true),
+            select('outcome', ['processed', 'ignored', 'failed'], true),
+            text('orderId'),
+            text('processedAt'),
+          ],
+          indexes: [WEBHOOK_EVENT_INDEXES.gatewayEventId],
+        });
+        createdCollections.push('processed_webhook_events');
         created = true;
       }
 
@@ -484,13 +676,13 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
           name: 'customers',
           type: 'base',
           schema: [
-            { name: 'email', type: 'email', required: true },
-            { name: 'firstName', type: 'text' },
-            { name: 'lastName', type: 'text' },
-            { name: 'phone', type: 'text' },
-            { name: 'addresses', type: 'json' },
-            { name: 'defaultAddressId', type: 'text' },
-            { name: 'metadata', type: 'json' },
+            email('email', true),
+            text('firstName'),
+            text('lastName'),
+            text('phone'),
+            json('addresses'),
+            text('defaultAddressId'),
+            json('metadata'),
           ],
         });
         createdCollections.push('customers');
@@ -503,6 +695,19 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
 }
 
 // Helper to build PocketBase filter string
+/** Single ledger row for `(gateway, eventId)`, or undefined. */
+async function findWebhookEventRecord(
+  pb: PocketBase,
+  gateway: string,
+  eventId: string
+): Promise<any | undefined> {
+  const records = await pb.collection('processed_webhook_events').getFullList({
+    filter: `gateway="${escapeFilter(gateway)}" && eventId="${escapeFilter(eventId)}"`,
+    limit: 1,
+  });
+  return records[0];
+}
+
 function buildFilter(filters: Record<string, unknown>): string {
   return Object.entries(filters)
     .map(([key, value]) => {

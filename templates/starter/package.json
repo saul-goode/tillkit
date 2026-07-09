@@ -7,7 +7,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc",
     "test": "vitest run",
-    "db:setup": "tsx scripts/setup-pocketbase.ts"
+    "db:setup": "tsx scripts/setup-pocketbase.ts",
+    "migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
     "@tillkit/core": "workspace:*",
@@ -16,7 +17,8 @@
     "@tillkit/integration-stripe": "workspace:*",
     "hono": "^4.0.0",
     "@hono/node-server": "^1.8.0",
-    "@tillkit/integration-search": "workspace:*"
+    "@tillkit/integration-search": "workspace:*",
+    "pocketbase": "^0.21.0"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

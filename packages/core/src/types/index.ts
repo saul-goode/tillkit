@@ -117,6 +117,9 @@ export type FulfillmentStatus =
   | 'fulfilled'
   | 'returned';
 
+/** Payment gateways that can originate an order. */
+export type PaymentGateway = 'stripe' | 'paypal';
+
 export interface Order {
   id: string;
   orderNumber: string;
@@ -137,8 +140,33 @@ export interface Order {
   transactions: Transaction[];
   notes?: string;
   metadata?: Record<string, unknown>;
+  /** Gateway that produced this order; absent for manually-created orders. */
+  gateway?: PaymentGateway;
+  /**
+   * The gateway's identifier for the payment that created this order — Stripe
+   * Checkout session id, PayPal order id. Unique per gateway, and the key that
+   * makes order creation idempotent. Absent for manual orders.
+   */
+  gatewayRef?: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Outcome of processing a webhook delivery. */
+export type WebhookOutcome = 'processed' | 'ignored' | 'failed';
+
+/**
+ * Ledger entry recording that a gateway event's side effects have run.
+ * Unique on (gateway, eventId) so redelivery is a no-op.
+ */
+export interface ProcessedWebhookEvent {
+  id: string;
+  gateway: PaymentGateway;
+  eventId: string;
+  eventType: string;
+  outcome: WebhookOutcome;
+  orderId?: string;
+  processedAt: Date;
 }
 
 export interface OrderItem {

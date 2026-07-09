@@ -15,10 +15,18 @@ Two new fields on the existing `Order`, enabling the idempotency guarantee.
 | `gateway` | `'stripe' \| 'paypal' \| null` | yes | Which gateway produced this order. Null for manually-created orders. |
 | `gatewayRef` | `string \| null` | yes | The gateway's identifier for the payment that created this order: Stripe Checkout **session id** (`cs_…`), PayPal **order id**. Null for manual orders. |
 
-**Constraint**: `UNIQUE (gateway, gatewayRef)` where both are non-null.
+**Constraint**: `UNIQUE (gateway, gatewayRef)`, applied **only to rows that have a gateway reference**.
 
-- PocketBase: partial-unique behavior is not available; use `CREATE UNIQUE INDEX idx_orders_gateway_ref ON orders (gateway, gatewayRef)`. SQLite treats `NULL`s as distinct in unique indexes, so multiple manual orders with `(null, null)` coexist. This is the desired behavior and is *why* the fields are nullable rather than empty-string.
-- Supabase/Postgres: same semantics — `NULL` values never conflict in a unique index.
+> **Corrected after empirical testing against PocketBase v0.22.47.** An earlier
+> draft of this document assumed "NULLs never conflict in a unique index" and
+> therefore that a plain composite index was sufficient. That is false on
+> PocketBase: text fields store `''`, not `NULL`, so a plain composite unique
+> index makes the *second* manual order (`gateway: ''`, `gatewayRef: ''`)
+> collide with the first. Verified — the insert is rejected with
+> `validation_not_unique` on both fields. A **partial** index is required.
+
+- **PocketBase (SQLite)**: `CREATE UNIQUE INDEX idx_orders_gateway_ref ON orders (gateway, gatewayRef) WHERE gatewayRef != ''`. Verified: unlimited manual orders coexist; `(stripe, cs_1)` twice is rejected; `(paypal, cs_1)` coexists with `(stripe, cs_1)`; 10 concurrent inserts of one key yield exactly 1 success.
+- **Supabase (Postgres)**: real `NULL`s, so `CREATE UNIQUE INDEX ... ON orders (gateway, gateway_ref) WHERE gateway_ref IS NOT NULL`. The predicate is stated explicitly rather than relying on NULL-distinctness, so both backends express the same intent.
 
 **Why not reuse `orderNumber`**: it is TillKit's own human-facing identifier (`TK-YYYYMMDD-XXXX`), unrelated to any gateway. The current PayPal code conflates the two and is broken as a result (research R6).
 
@@ -102,7 +110,9 @@ Required Postgres DDL:
 ```sql
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS gateway text;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS gateway_ref text;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_gateway_ref ON orders (gateway, gateway_ref);
+-- Partial: manual orders (gateway_ref IS NULL) must never conflict.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_gateway_ref
+  ON orders (gateway, gateway_ref) WHERE gateway_ref IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS processed_webhook_events (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -116,10 +126,11 @@ CREATE TABLE IF NOT EXISTS processed_webhook_events (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_events ON processed_webhook_events (gateway, event_id);
 ```
 
-Equivalent PocketBase index SQL:
+Equivalent PocketBase index SQL (note the partial predicate — PocketBase text
+fields are `''`, never `NULL`):
 
 ```sql
-CREATE UNIQUE INDEX `idx_orders_gateway_ref` ON `orders` (`gateway`, `gatewayRef`)
+CREATE UNIQUE INDEX `idx_orders_gateway_ref` ON `orders` (`gateway`, `gatewayRef`) WHERE `gatewayRef` != ''
 CREATE UNIQUE INDEX `idx_orders_number`      ON `orders` (`orderNumber`)
 CREATE UNIQUE INDEX `idx_webhook_events`     ON `processed_webhook_events` (`gateway`, `eventId`)
 ```

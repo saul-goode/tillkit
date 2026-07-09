@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
-    "dev": "tsup src/index.ts --format esm --dts --watch"
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tillkit/core": "workspace:*",
@@ -21,6 +22,8 @@
   },
   "devDependencies": {
     "tsup": "^8.0.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^1.6.1",
+    "zod": "^3.22.4"
   }
 }
