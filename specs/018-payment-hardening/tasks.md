@@ -142,13 +142,13 @@ pnpm monorepo. Packages under `packages/`, reference storefront under `templates
 
 ### Tests for User Story 4
 
-- [ ] T038 [P] [US4] Write revalidation tests in `packages/server/src/__tests__/revalidation.test.ts`: price drift 1999 → 2499 blocks session creation; quantity 5 against `inventory.available: 2` with `allowOutOfStock: false` blocks; a deleted or `archived` product is reported as removed; a clean cart returns `ok: true`
+- [x] T038 [P] [US4] Write revalidation tests in `packages/server/src/__tests__/revalidation.test.ts`: price drift 1999 → 2499 blocks session creation; quantity 5 against `inventory.available: 2` with `allowOutOfStock: false` blocks; a deleted or `archived` product is reported as removed; a clean cart returns `ok: true`
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Implement `revalidateCart(db, cart): Promise<CartRevalidationResult>` in a new `packages/server/src/checkout.ts` per [data-model.md](./data-model.md#entity-cartrevalidationresult-new-transient--not-persisted). `ok` is true only when `priceChanges`, `stockIssues`, and `removedItems` are all empty.
-- [ ] T040 [US4] Export `revalidateCart` from `packages/server/src/index.ts`
-- [ ] T041 [US4] Call `revalidateCart` before `stripe.createCheckoutSession` in `templates/starter/src/routes/checkout.ts`; on `!ok`, update the cart to current prices, drop removed items, and redirect to `/cart` with a flash message explaining what changed
+- [x] T039 [US4] Implement `revalidateCart(db, cart): Promise<CartRevalidationResult>` in a new `packages/server/src/checkout.ts` per [data-model.md](./data-model.md#entity-cartrevalidationresult-new-transient--not-persisted). `ok` is true only when `priceChanges`, `stockIssues`, and `removedItems` are all empty.
+- [x] T040 [US4] Export `revalidateCart` from `packages/server/src/index.ts`
+- [x] T041 [US4] Call `revalidateCart` before `stripe.createCheckoutSession` in `templates/starter/src/routes/checkout.ts`; on `!ok`, update the cart to current prices, drop removed items, and redirect to `/cart` with a flash message explaining what changed
 
 **Checkpoint**: All in-scope user stories independently functional.
 

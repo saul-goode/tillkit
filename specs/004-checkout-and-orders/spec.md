@@ -64,13 +64,13 @@ A shopper who abandons Stripe Checkout returns via `/checkout/cancel` and finds 
 - **FR-001**: Checkout MUST create a Stripe Checkout session (mode `payment`) from the cart with line items in integer cents, `billing_address_collection: required`, shipping address collection, and the cart id in metadata.
 - **FR-002**: Order creation from a Stripe session MUST verify `payment_status === 'paid'` before creating anything.
 - **FR-003**: A successful order creation MUST atomically-in-effect: create the order (items snapshot, subtotal, total from `amount_total`, currency uppercased, shipping address), append a `sale` transaction with session/payment-intent ids in metadata, clear the cart, and decrement inventory.
-- **FR-004**: Order creation MUST be idempotent per Stripe session id — the same session can never produce two orders. [GAP]
+- **FR-004**: Order creation MUST be idempotent per Stripe session id — the same session can never produce two orders. Enforced by a unique `(gateway, gatewayRef)` index and insert-and-catch, not by a check-then-insert (spec 018).
 - **FR-005**: The success page MUST display the created order's `orderNumber`.
 - **FR-006**: When the payment integration is absent, every checkout entry point MUST degrade to an informative non-crashing state.
 - **FR-007**: PayPal checkout MUST convert cents↔decimal strings only at the integration boundary and carry cart metadata via `custom_id`.
 - **FR-008**: Allowed shipping countries MUST be configurable. [GAP — hardcoded `['US','CA','GB','AU']` in the Stripe integration]
 - **FR-009**: The PayPal brand name MUST be configurable. [GAP — hardcoded `'TillKit Store'`]
-- **FR-010**: Checkout MUST revalidate cart prices and inventory availability server-side before creating the payment session. [GAP]
+- **FR-010**: Checkout MUST revalidate cart prices and inventory availability server-side before creating the payment session. `revalidateCart()` blocks session creation on any price drift, stock shortfall, or removed product, and the starter reconciles the cart before returning the shopper to `/cart` (spec 018 US4).
 
 ### Key Entities
 
@@ -91,15 +91,22 @@ A shopper who abandons Stripe Checkout returns via `/checkout/cancel` and finds 
 
 - Stripe-hosted Checkout (not embedded Payment Element) is the supported card flow; SCA is delegated to Stripe.
 - The webhook path (spec 005) is the source of truth for payment events; the success-page path is a UX convenience that must converge to the same outcome.
-- Refunds are initiated via gateway dashboards today; first-class refund flows are spec 018.
+- Refunds are initiated via gateway dashboards today; first-class refund flows are deferred to spec 020, gated on admin auth (spec 017).
 
 ## Known Gaps
 
-- No idempotency on order creation (FR-004) — the most consequential gap in this spec; fix belongs to spec 018 (payment hardening).
-- No server-side revalidation of prices/inventory at checkout (FR-010) — oversell and stale-price windows exist.
-- `unknown@example.com` fallback email on orders.
-- Hardcoded shipping countries and PayPal brand name.
-- The starter's Stripe webhook route exists but order creation on `payment_success` webhook is left to the `onPaymentSuccess` callback — the starter does not implement it, so a shopper who never returns to the success page produces a paid-but-orderless state. (Cross-reference spec 005.)
+Closed by spec 018:
+
+- ~~No idempotency on order creation (FR-004)~~ — enforced by a unique `(gateway, gatewayRef)` index. The success page and the webhook race in production; only the database can arbitrate.
+- ~~No server-side revalidation of prices/inventory at checkout (FR-010)~~ — `revalidateCart()` gates session creation.
+- ~~A paid order with no customer email fell back to `unknown@example.com` silently~~ — the email is now resolved from `customer_details` first, and the fallback logs loudly.
+
+Still open:
+
+- The starter interpolates product names and other database-sourced strings raw into HTML throughout (`<h3>${item.name}</h3>`). A store admin — or anyone who can write a product name — can inject markup. Needs its own spec.
+- `decrementInventoryForOrder` decrements product-level inventory even for variant line items, while revalidation reads variant-level inventory. The two disagree for variant products.
+- Hardcoded shipping countries and PayPal brand name (FR-008, FR-009).
+- Revalidation and payment are not transactional: stock can sell out in the window between `revalidateCart()` and the webhook's inventory decrement. Blocking that window entirely requires reservations, which no spec covers yet.
 
 ## Existing Implementation (reference)
 

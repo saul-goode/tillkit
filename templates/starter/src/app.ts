@@ -6,6 +6,7 @@ import {
   getSessionId,
   setSessionCookie,
   layout,
+  takeFlash,
 } from './app-context.js';
 import type { SearchService } from '@tillkit/integration-search';
 import type { SubscriptionProvider } from '@tillkit/core';
@@ -161,6 +162,9 @@ export function createStarterApp(deps: {
     const sessionId = getSessionId(c);
     setSessionCookie(c, sessionId);
 
+    // Consume any message left by a checkout attempt that was turned back.
+    const flash = takeFlash(c);
+
     let cart: Cart | null = null;
     try {
       cart = await database.cart.get(sessionId);
@@ -177,6 +181,7 @@ export function createStarterApp(deps: {
           <p>Looks like you haven't added anything yet.</p>
           <a href="/products" class="button-primary">Continue Shopping</a>
         `,
+          flash,
         ),
       );
     }
@@ -231,6 +236,7 @@ export function createStarterApp(deps: {
         }
       </div>
     `,
+      flash,
     );
     return c.html(html);
   });
