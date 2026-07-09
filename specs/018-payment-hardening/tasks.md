@@ -29,7 +29,7 @@ pnpm monorepo. Packages under `packages/`, reference storefront under `templates
 
 **Purpose**: Tooling that later phases depend on. No product behavior changes.
 
-- [ ] T001 [P] Add `.specify/feature.json` to `.gitignore` (per-developer spec-kit state, not shared)
+- [x] T001 [P] Add `.specify/feature.json` to `.gitignore` (per-developer spec-kit state, not shared)
 - [ ] T002 [P] Initialize changesets (`pnpm changeset init`) so the breaking `handleWebhook` signature change can be recorded in `.changeset/`
 - [ ] T003 [P] Add a `test` script (`vitest run`) to `packages/adapters/pocketbase/package.json` and `packages/adapters/supabase/package.json` — neither defines one today, so adapter tests would never run in CI
 - [ ] T004 Create the shared adapter contract suite skeleton in `packages/adapters/__tests__/contract.test.ts`, exporting a `runContractTests(adapterFactory, name)` harness that both adapters invoke, plus `packages/adapters/vitest.config.ts`
@@ -88,18 +88,18 @@ pnpm monorepo. Packages under `packages/`, reference storefront under `templates
 
 ### Tests for User Story 1
 
-- [ ] T020 [P] [US1] Write verification tests in `packages/integrations/paypal/src/__tests__/webhook-verification.test.ts` with the verify endpoint mocked: valid signature accepted; `verification_status: "FAILURE"` rejected; each of the five `paypal-*` headers missing → rejected; absent `webhookId` → `PayPalWebhookNotConfiguredError` (fail closed, never processed)
-- [ ] T021 [P] [US1] Write OAuth token-cache tests in `packages/integrations/paypal/src/__tests__/token-cache.test.ts`: token reused within the window; refreshed after `expires_in − 60s`; a 401 triggers exactly one re-fetch; concurrent callers share one in-flight promise (no stampede)
-- [ ] T022 [P] [US1] Write route-level tests in `packages/server/src/__tests__/paypal-webhook.test.ts`: forged payload → 400 and no order created; verified payload → processed
+- [x] T020 [P] [US1] Write verification tests in `packages/integrations/paypal/src/__tests__/webhook-verification.test.ts` with the verify endpoint mocked: valid signature accepted; `verification_status: "FAILURE"` rejected; each of the five `paypal-*` headers missing → rejected; absent `webhookId` → `PayPalWebhookNotConfiguredError` (fail closed, never processed)
+- [x] T021 [P] [US1] Write OAuth token-cache tests in `packages/integrations/paypal/src/__tests__/token-cache.test.ts`: token reused within the window; refreshed after `expires_in − 60s`; a 401 triggers exactly one re-fetch; concurrent callers share one in-flight promise (no stampede)
+- [x] T022 [P] [US1] Write route-level tests in `packages/server/src/__tests__/paypal-webhook.test.ts`: forged payload → 400 and no order created; verified payload → processed
 
 ### Implementation for User Story 1
 
-- [ ] T023 [US1] Implement instance-scoped OAuth token caching in `packages/integrations/paypal/src/index.ts` (`expires_in − 60s`, refresh on 401, shared in-flight promise). Must NOT be module-global — that would leak tokens across integrations with different credentials.
-- [ ] T024 [US1] Add `PayPalWebhookNotConfiguredError` and `PayPalWebhookVerificationError` to `packages/integrations/paypal/src/index.ts`
-- [ ] T025 [US1] Rewrite `handleWebhook` in `packages/integrations/paypal/src/index.ts` to be **async** and verify via `POST /v1/notifications/verify-webhook-signature` per [contracts/paypal-webhook-verification.md](./contracts/paypal-webhook-verification.md). Extract the five headers case-insensitively; pass `JSON.parse(rawBody)` **untransformed** as `webhook_event` (re-serializing breaks verification); accept only `verification_status === "SUCCESS"`; inspect the body, not the HTTP status (200 is returned for both outcomes).
-- [ ] T026 [US1] Add the `dispute` normalized event type and remap `CUSTOMER.DISPUTE.CREATED` → `dispute` (currently mislabeled `refund`, which corrupts `paymentStatus`) in `processWebhookEvent`, `packages/integrations/paypal/src/index.ts`
-- [ ] T027 [US1] Update `packages/server/src/routes/paypal-webhooks.ts` to `await` the now-async `handleWebhook`, pass `config.webhookId` through to the integration, and return 400 with a loud log when verification fails or config is absent
-- [ ] T028 [US1] Add `PAYPAL_WEBHOOK_ID`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` to `.env.example` and `templates/starter/.env.example`
+- [x] T023 [US1] Implement instance-scoped OAuth token caching in `packages/integrations/paypal/src/index.ts` (`expires_in − 60s`, refresh on 401, shared in-flight promise). Must NOT be module-global — that would leak tokens across integrations with different credentials.
+- [x] T024 [US1] Add `PayPalWebhookNotConfiguredError` and `PayPalWebhookVerificationError` to `packages/integrations/paypal/src/index.ts`
+- [x] T025 [US1] Rewrite `handleWebhook` in `packages/integrations/paypal/src/index.ts` to be **async** and verify via `POST /v1/notifications/verify-webhook-signature` per [contracts/paypal-webhook-verification.md](./contracts/paypal-webhook-verification.md). Extract the five headers case-insensitively; pass `JSON.parse(rawBody)` **untransformed** as `webhook_event` (re-serializing breaks verification); accept only `verification_status === "SUCCESS"`; inspect the body, not the HTTP status (200 is returned for both outcomes).
+- [x] T026 [US1] Add the `dispute` normalized event type and remap `CUSTOMER.DISPUTE.CREATED` → `dispute` (currently mislabeled `refund`, which corrupts `paymentStatus`) in `processWebhookEvent`, `packages/integrations/paypal/src/index.ts`
+- [x] T027 [US1] Update `packages/server/src/routes/paypal-webhooks.ts` to `await` the now-async `handleWebhook`, pass `config.webhookId` through to the integration, and return 400 with a loud log when verification fails or config is absent
+- [x] T028 [US1] Add `PAYPAL_WEBHOOK_ID`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` to `.env.example` and `templates/starter/.env.example`
 
 **Checkpoint**: US1 is independently shippable. The most severe defect in the codebase is closed.
 
