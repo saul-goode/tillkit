@@ -12,3 +12,4 @@ dist/
 coverage/
 .lean-ctx/
 .claude/settings.local.json
+.specify/feature.json
