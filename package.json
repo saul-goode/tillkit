@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "description": "TillKit - Open source e-commerce starter kit",
   "type": "module",
+  "packageManager": "pnpm@10.32.1",
   "scripts": {
     "build": "pnpm recursive run build",
     "dev": "pnpm --filter ./templates/starter dev",

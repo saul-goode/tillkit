@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-09
 
-**Status**: Proposed
+**Status**: Partially implemented — LICENSE, CI, and artifact untracking done; publishing, docs correction, and contribution guides outstanding
 
 **Input**: v1 roadmap priority: project viability ops — what makes TillKit adoptable by developers who didn't write it
 
@@ -102,15 +102,25 @@ The published docs match implemented behavior. The audit found direct contradict
 
 ## Known Gaps (current state)
 
-- No LICENSE file despite three MIT claims (README ×2, FAQ).
-- No `.github/`, no CI of any kind, no `.changeset/` directory.
-- Build outputs tracked in git; builds dirty the tree.
-- Docs contradict code in at least five places (see User Story 4).
-- Packages have never been published; `npm create tillkit` does not work outside this repo.
+Satisfied:
+
+- ~~No LICENSE file despite three MIT claims~~ — MIT LICENSE added (FR-001).
+- ~~No `.github/`, no CI of any kind~~ — CI runs install → build → lint → test on Node 18 and 22 for every PR and push to main (FR-002).
+- ~~Build outputs tracked in git; builds dirty the tree~~ — 130 files untracked (22 `dist/`, 108 under `node_modules/`); a `git diff --exit-code` CI step prevents regression (FR-003).
+
+Outstanding:
+
+- No `.changeset/` directory; no release workflow. Packages have never been published, so `npm create tillkit` does not work outside this repo (FR-004, FR-005) — blocked on the template-distribution decision in spec 011.
+- Docs contradict code in at least five places (FR-006, see User Story 4).
+- No CONTRIBUTING guide or PR template (FR-007, FR-008).
+- `.env.example` omits env vars the code reads: `POCKETBASE_URL`, `POCKETBASE_ADMIN_TOKEN`, `APP_URL` (FR-009).
+- README's test-count badge (41) undercounts the suite (70) and its roadmap has drifted — part of FR-006.
 
 ## Existing Implementation (reference)
 
-- `package.json` — changesets scripts already wired, tooling installed.
+- `LICENSE` — MIT, matching every license claim.
+- `.github/workflows/ci.yml` — the quality gates from the constitution, executable.
+- `package.json` — `packageManager` pinned for CI/local parity; changesets scripts wired but unused.
 - `README.md`, `docs/faq.md`, `docs/deployment.md`, `docs/examples.md` — the drift surface.
-- `.gitignore` — already lists `dist/`; tracking predates it.
-- `CLAUDE.md` — documents the build-before-test constraint CI must encode.
+- `.gitignore` — now also covers `.lean-ctx/` and local Claude settings.
+- `CLAUDE.md` — documents the build-before-test constraint CI now encodes.

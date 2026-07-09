@@ -13,7 +13,7 @@ These four, plus closing the `[GAP]`-tagged FRs in specs 001/004/005/009, are wh
 | 1 | [018 Payment Hardening](018-payment-hardening/spec.md) | Proposed | PayPal webhooks are processed **unverified**; order creation is **non-idempotent**. Trust-critical. |
 | 2 | [017 Customer Accounts & Auth](017-customer-accounts/spec.md) | Proposed | Existing prototype has no password verification and forgeable sessions; admin (spec 009) needs the same session mechanism to close its zero-auth gap. |
 | 3 | [016 Transactional Email](016-transactional-email/spec.md) | Partial | Providers built (SendGrid/Resend), wired to nothing. Order confirmations are table stakes; also unblocks password reset for 017. |
-| 4 | [019 Project Operations](019-project-operations/spec.md) | Proposed | **No LICENSE file**, no CI, packages unpublished, docs contradict code. Blocks adoption regardless of features. |
+| 4 | [019 Project Operations](019-project-operations/spec.md) | Partial | LICENSE + CI + artifact untracking **done**. Remaining: publishing via changesets, docs correction, contribution guides. |
 
 ## Implemented capabilities (backfilled)
 
