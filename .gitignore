@@ -10,3 +10,5 @@ dist/
 .idea/
 .vscode/
 coverage/
+.lean-ctx/
+.claude/settings.local.json
