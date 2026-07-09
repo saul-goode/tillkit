@@ -2,6 +2,7 @@ import PocketBase from 'pocketbase';
 import type {
   Product,
   Cart,
+  CartItem,
   Order,
   Customer,
   DatabaseAdapter,
@@ -180,6 +181,26 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
     pb.authStore.save(config.adminToken, null);
   }
 
+  /**
+   * Persist a cart's item list and the totals derived from it.
+   *
+   * Cart items live in the `carts.items` JSON column — the same column `get()`
+   * reads. An earlier implementation wrote them to a separate `cart_items`
+   * collection that `setup()` never provisioned and `get()` never joined, so
+   * every mutation either 404'd or silently vanished.
+   *
+   * Totals are recomputed from the items, never trusted from the caller.
+   */
+  async function writeCartItems(cartId: string, items: CartItem[]): Promise<Cart> {
+    const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    const record = await pb.collection('carts').update(cartId, {
+      items,
+      subtotal,
+      total: subtotal,
+    });
+    return { ...record, items: record.items ?? [] } as unknown as Cart;
+  }
+
   return {
     // Products
     products: {
@@ -247,10 +268,13 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         try {
           const records = await pb.collection('carts').getFullList({
             filter: `sessionId="${escapeFilter(sessionId)}"`,
-            expand: 'items',
             limit: 1,
           });
-          return records[0] as unknown as Cart;
+          const record = records[0];
+          if (!record) return null;
+          // `items` is a JSON column. PocketBase returns `[]` for an unset one,
+          // but a hand-created collection may leave it null.
+          return { ...record, items: record.items ?? [] } as unknown as Cart;
         } catch {
           return null;
         }
@@ -281,45 +305,57 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
 
-        await pb.collection('cart_items').create({
-          cart: cart.id,
-          ...item,
-        });
+        // Adding the same product/variant again bumps the quantity rather than
+        // creating a second line, matching what a shopper expects from a cart.
+        const existing = cart.items.find(
+          (i) => i.productId === item.productId && i.variantId === item.variantId,
+        );
+        const items: CartItem[] = existing
+          ? cart.items.map((i) =>
+              i === existing
+                ? {
+                    ...i,
+                    quantity: i.quantity + item.quantity,
+                    lineTotal: i.price * (i.quantity + item.quantity),
+                  }
+                : i,
+            )
+          : [
+              ...cart.items,
+              { ...item, id: crypto.randomUUID(), lineTotal: item.price * item.quantity },
+            ];
 
-        return this.get(sessionId) as Promise<Cart>;
+        return writeCartItems(cart.id, items);
       },
 
       async updateItem(sessionId: string, itemId: string, quantity: number): Promise<Cart> {
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
 
-        if (quantity <= 0) {
-          await pb.collection('cart_items').delete(itemId);
-        } else {
-          await pb.collection('cart_items').update(itemId, { quantity });
-        }
+        const items =
+          quantity <= 0
+            ? cart.items.filter((i) => i.id !== itemId)
+            : cart.items.map((i) =>
+                i.id === itemId ? { ...i, quantity, lineTotal: i.price * quantity } : i,
+              );
 
-        return this.get(sessionId) as Promise<Cart>;
+        return writeCartItems(cart.id, items);
       },
 
       async removeItem(sessionId: string, itemId: string): Promise<Cart> {
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
 
-        await pb.collection('cart_items').delete(itemId);
-        return this.get(sessionId) as Promise<Cart>;
+        return writeCartItems(
+          cart.id,
+          cart.items.filter((i) => i.id !== itemId),
+        );
       },
 
       async clear(sessionId: string): Promise<void> {
         const cart = await this.get(sessionId);
         if (!cart) return;
-
-        // Delete all cart items
-        const items = await pb.collection('cart_items').getFullList({
-          filter: `cart="${cart.id}"`,
-        });
-
-        await Promise.all(items.map((item) => pb.collection('cart_items').delete(item.id)));
+        await writeCartItems(cart.id, []);
       },
     },
 

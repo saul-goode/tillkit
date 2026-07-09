@@ -24,7 +24,7 @@ const FEATURES = {
 };
 
 /** Collections the contract suite writes to. Truncated between tests. */
-const TRUNCATE = ['processed_webhook_events', 'orders'];
+const TRUNCATE = ['processed_webhook_events', 'orders', 'carts'];
 
 if (!url) {
   describe.skip('DatabaseAdapter contract: pocketbase (POCKETBASE_TEST_URL not set)', () => {});

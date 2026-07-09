@@ -57,7 +57,7 @@ A developer lists products with `{ limit, offset, sort, order, filters }` and se
 ### Edge Cases
 
 - Reads for missing records (`get`, `getBySlug`, `getByNumber`, `getByEmail`, `cart.get`) return `null`; writes throw.
-- `cart.updateItem` with quantity ≤ 0 removes the item (PocketBase: `<= 0`; Supabase: `=== 0` — behavior must be unified at `<= 0`). [GAP]
+- `cart.updateItem` with quantity ≤ 0 removes the item. Both adapters now use `<= 0`; a negative quantity must never persist, or checkout would credit the shopper.
 - `orders.create` without explicit statuses defaults to `pending` / `pending` / `unfulfilled`.
 - Order numbers: `TK-YYYYMMDD-XXXX` (4 random base36 chars, uppercased). Collisions are possible and currently unhandled — creation must retry or the suffix must be widened. [GAP]
 - Concurrent `cart.addItem` calls for the same session may race; last-write-wins is acceptable, lost items are not.
@@ -71,7 +71,9 @@ A developer lists products with `{ limit, offset, sort, order, filters }` and se
 - **FR-003**: `setup(features)` MUST provision all storage required by the enabled features, idempotently. [GAP — Supabase `setup()` builds SQL strings but never executes them; it reports `created: true` without creating anything]
 - **FR-004**: All monetary fields MUST be stored and returned as integer cents with no transformation in the adapter layer.
 - **FR-005**: User-supplied values used in filters or search queries MUST be escaped for the backend's query syntax. [GAP — PocketBase escapes only `"`; Supabase interpolates search text raw into a PostgREST `.or(...ilike...)` expression]
-- **FR-006**: `cart.updateItem` MUST recompute the item's line total from its stored unit price. [GAP — Supabase hardcodes `line_total = quantity * 100`]
+- **FR-006**: `cart.updateItem` MUST recompute the item's line total from its stored unit price.
+- **FR-011**: `cart.get` MUST return items in the contract's `CartItem` shape (camelCase, with a stable `id` addressable by `updateItem` / `removeItem`), and `subtotal` MUST equal the sum of `price × quantity` over those items. An adapter MUST NOT return raw backend rows.
+- **FR-012**: `cart.addItem` for a `(productId, variantId)` pair already in the cart MUST increment that line's quantity rather than append a second line.
 - **FR-007**: `orders.addTransaction` MUST append a transaction linked to the order and return the refreshed order.
 - **FR-008**: List operations MUST support `limit`, `offset`, `sort`, `order`, and equality `filters`, returning `{ items, total, page, perPage, hasMore }`.
 - **FR-009**: Order numbers MUST be unique per store; generation MUST tolerate collisions. [GAP]
@@ -87,7 +89,7 @@ A developer lists products with `{ limit, offset, sort, order, filters }` and se
 
 ### Measurable Outcomes
 
-- **SC-001**: A contract test suite runs identically against every shipped adapter and passes (currently no shared contract suite exists — adapters are only exercised indirectly).
+- **SC-001**: A contract test suite runs identically against every shipped adapter and passes. `packages/adapters/__tests__/contract.ts` exists and runs against a live PocketBase in CI; the Supabase harness is env-gated and skips, so parity there is asserted rather than demonstrated.
 - **SC-002**: Swapping adapters in the starter requires changing ≤ 2 lines of application code plus env vars.
 - **SC-003**: `setup()` on an empty database yields a store that passes the TEST_RUNBOOK smoke checklist with zero manual schema steps.
 - **SC-004**: Malicious filter/search input (quotes, operators, `%`) returns empty or literal-match results — never a backend error or data leak.
@@ -114,13 +116,22 @@ Discovered while implementing 018:
 - **The PocketBase SDK auto-cancels concurrent identical requests**, rejecting the earlier one with `status: 0`. On a server this is wrong: the success-page and webhook paths legitimately issue the same insert concurrently, and one would be cancelled rather than either winning or hitting the unique index. The adapter now sets `autoCancellation(false)`.
 - **PocketBase text fields store `''`, never `NULL`.** A plain composite unique index on `(gateway, gatewayRef)` therefore makes the second manual order collide with the first. Partial indexes (`WHERE gatewayRef != ''`) are required.
 
+Discovered while implementing 018 US4 (cart, verified against a live PocketBase v0.22.47):
+
+- **The PocketBase cart was entirely non-functional.** `addItem` / `updateItem` / `removeItem` / `clear` wrote to a `cart_items` collection that `setup()` never provisioned, so every mutation failed with a 404; and `cart.get()` read the `carts.items` JSON column, which nothing ever wrote, so it returned `[]` regardless. The storefront cart could never hold an item on the starter's default adapter. No test covered the round-trip. Fixed by making all four mutations operate on the JSON column that `get()` reads — the design the schema, `TEST_RUNBOOK.md`, and CLAUDE.md all already describe. `cart_items` was vestigial (FR-011).
+- **Supabase `cart.get()` returned untransformed `cart_items` rows**, so callers reading `item.productId` or `item.lineTotal` silently got `undefined` where the contract promises them. Fixed with a `toCartItem` mapper (FR-011).
+- **Neither adapter recomputed `subtotal` after a cart mutation**; PocketBase never wrote it and Supabase returned a stale stored column. Both now derive it from the items, so it cannot drift from what the shopper is charged (FR-011).
+- **Neither adapter deduplicated `addItem`**, so adding the same product twice produced two lines (FR-012).
+- Cart behavior is now covered by seven cases in the shared contract suite. The absence of *any* cart coverage is what let a completely dead cart ship.
+
 Still open:
 
 - The adapter emits the PocketBase **v0.22 `schema:` format**, renamed to `fields:` in v0.23. TillKit cannot provision a store on any PocketBase ≥ 0.23 (current release: 0.39.x). This is a hard compatibility ceiling and needs its own spec.
 - Supabase `orders.update` doesn't snake_case its payload — camelCase updates target nonexistent columns.
 - PocketBase escapes only double quotes in filters; Supabase escapes nothing in `search()`.
-- Cart-item removal threshold differs (`<= 0` vs `=== 0`).
-- The Supabase half of the contract suite is env-gated and therefore unverified in CI; parity is asserted from the contract, not demonstrated.
+- `docs/deployment.md` contains two conflicting `cart_items` DDL blocks (one `TEXT` keyed with no default, one `UUID` keyed). They need reconciling.
+- The Supabase half of the contract suite is env-gated and therefore unverified in CI; parity is asserted from the contract, not demonstrated. **The seven new cart cases are unrun against Supabase** — its cart fixes are written to the contract, not proven by it.
+- `decrementInventoryForOrder` ignores `variantId` and always decrements product-level inventory, while a variant may carry its own `inventory`. Revalidation reads variant inventory, so the two can disagree.
 
 ## Existing Implementation (reference)
 

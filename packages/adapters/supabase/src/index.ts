@@ -204,19 +204,25 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
           .select('*,cart_items(*)')
           .eq('session_id', sessionId)
           .single();
-        
+
         if (error || !cart) return null;
-        
+
+        // cart_items rows are snake_case; the contract returns CartItem.
+        const items = (cart.cart_items || []).map(toCartItem);
+        // Derive totals from the items rather than trusting the stored column:
+        // it cannot drift out of sync with what the shopper is about to be charged.
+        const subtotal = items.reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
+
         return {
           ...cart,
-          items: cart.cart_items || [],
+          items,
           id: cart.id,
           sessionId: cart.session_id,
           currency: cart.currency || 'USD',
-          subtotal: cart.subtotal || 0,
+          subtotal,
           totalTax: cart.total_tax || 0,
           totalShipping: cart.total_shipping || 0,
-          total: cart.total || 0,
+          total: subtotal,
           createdAt: new Date(cart.created_at),
           updatedAt: new Date(cart.updated_at),
         };
@@ -270,12 +276,22 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
         // Get cart
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
-        
+
+        // Adding the same product/variant again bumps the quantity rather than
+        // creating a second line, matching what a shopper expects from a cart.
+        const existing = (cart.items || []).find(
+          (it: any) => it.productId === item.productId && it.variantId === item.variantId,
+        );
+        if (existing) {
+          return this.updateItem(sessionId, existing.id, existing.quantity + item.quantity);
+        }
+
         const { error } = await supabase
           .from('cart_items')
           .insert({
             cart_id: cart.id,
             product_id: item.productId,
+            variant_id: item.variantId ?? null,
             name: item.name,
             sku: item.sku,
             price: item.price,
@@ -283,7 +299,7 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
             image: item.image,
             line_total: item.price * item.quantity,
           });
-        
+
         if (error) throw error;
         return this.get(sessionId) as any;
       },
@@ -292,7 +308,9 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
 
-        if (quantity === 0) {
+        // `<= 0`, not `=== 0`: a negative quantity must remove the line, not
+        // persist a negative one that would credit the shopper at checkout.
+        if (quantity <= 0) {
           return this.removeItem(sessionId, itemId);
         }
 
@@ -812,6 +830,27 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
 }
 
 // Transform Supabase product to TillKit format
+/**
+ * A `cart_items` row → the contract's `CartItem`.
+ *
+ * `cart.get()` previously returned these rows untransformed, so callers saw
+ * `product_id` / `line_total` where the contract promises `productId` /
+ * `lineTotal`. Every consumer reading `item.productId` silently got `undefined`.
+ */
+function toCartItem(data: any) {
+  return {
+    id: data.id,
+    productId: data.product_id,
+    variantId: data.variant_id ?? undefined,
+    name: data.name,
+    sku: data.sku,
+    price: data.price,
+    quantity: data.quantity,
+    lineTotal: data.line_total ?? data.price * data.quantity,
+    image: data.image ?? undefined,
+  };
+}
+
 function transformProduct(data: any) {
   return {
     ...data,

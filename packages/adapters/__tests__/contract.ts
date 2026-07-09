@@ -18,6 +18,7 @@ export interface ContractHarness {
 }
 
 let orderSeq = 0;
+let cartSeq = 0;
 function orderInput(overrides: Record<string, unknown> = {}) {
   orderSeq++;
   return {
@@ -201,6 +202,130 @@ export function runContractTests(name: string, setup: () => Promise<ContractHarn
       );
       const numbers = orders.map((o) => o.orderNumber);
       expect(new Set(numbers).size).toBe(numbers.length);
+    });
+
+    // ---- Cart round-trip --------------------------------------------------
+    //
+    // Regression: the PocketBase adapter wrote items to a `cart_items`
+    // collection that `setup()` never provisioned and `cart.get()` never read.
+    // Every mutation 404'd, and the storefront cart was silently always empty.
+    // These cases assert the round-trip that no test previously covered.
+
+    async function seedCart() {
+      const sessionId = `sess-${cartSeq++}`;
+      await db.cart.create(sessionId);
+      return sessionId;
+    }
+
+    it('addItem then get round-trips the item', async () => {
+      const sessionId = await seedCart();
+      await db.cart.addItem(sessionId, {
+        productId: 'p1',
+        name: 'Shirt',
+        sku: 'SH-1',
+        price: 1999,
+        quantity: 2,
+      });
+
+      const cart = await db.cart.get(sessionId);
+      expect(cart?.items).toHaveLength(1);
+      expect(cart?.items[0]).toMatchObject({ productId: 'p1', price: 1999, quantity: 2 });
+      expect(cart?.items[0].id).toBeTruthy(); // items must be addressable by id
+    });
+
+    it('derives lineTotal and subtotal from unit price × quantity', async () => {
+      const sessionId = await seedCart();
+      await db.cart.addItem(sessionId, {
+        productId: 'p1',
+        name: 'Shirt',
+        sku: 'SH-1',
+        price: 1999,
+        quantity: 3,
+      });
+
+      const cart = await db.cart.get(sessionId);
+      expect(cart?.items[0].lineTotal).toBe(5997);
+      expect(cart?.subtotal).toBe(5997);
+    });
+
+    it('updateItem recomputes lineTotal from the stored unit price', async () => {
+      // Regression: Supabase hardcoded `line_total = quantity * 100`.
+      const sessionId = await seedCart();
+      const added = await db.cart.addItem(sessionId, {
+        productId: 'p1',
+        name: 'Shirt',
+        sku: 'SH-1',
+        price: 1999,
+        quantity: 1,
+      });
+      const itemId = added.items[0].id;
+
+      const cart = await db.cart.updateItem(sessionId, itemId, 4);
+      expect(cart.items[0].lineTotal).toBe(7996);
+    });
+
+    it('updateItem with quantity <= 0 removes the item', async () => {
+      const sessionId = await seedCart();
+      const added = await db.cart.addItem(sessionId, {
+        productId: 'p1',
+        name: 'Shirt',
+        sku: 'SH-1',
+        price: 1999,
+        quantity: 1,
+      });
+
+      const cart = await db.cart.updateItem(sessionId, added.items[0].id, 0);
+      expect(cart.items).toHaveLength(0);
+    });
+
+    it('adding the same product twice bumps quantity instead of duplicating the line', async () => {
+      const sessionId = await seedCart();
+      const item = { productId: 'p1', name: 'Shirt', sku: 'SH-1', price: 1999, quantity: 1 };
+      await db.cart.addItem(sessionId, item);
+      const cart = await db.cart.addItem(sessionId, item);
+
+      expect(cart.items).toHaveLength(1);
+      expect(cart.items[0].quantity).toBe(2);
+    });
+
+    it('removeItem drops only the named item', async () => {
+      const sessionId = await seedCart();
+      await db.cart.addItem(sessionId, {
+        productId: 'p1',
+        name: 'Shirt',
+        sku: 'SH-1',
+        price: 1999,
+        quantity: 1,
+      });
+      const two = await db.cart.addItem(sessionId, {
+        productId: 'p2',
+        name: 'Mug',
+        sku: 'MG-1',
+        price: 900,
+        quantity: 1,
+      });
+
+      const target = two.items.find((i) => i.productId === 'p1')!;
+      const cart = await db.cart.removeItem(sessionId, target.id);
+
+      expect(cart.items).toHaveLength(1);
+      expect(cart.items[0].productId).toBe('p2');
+      expect(cart.subtotal).toBe(900);
+    });
+
+    it('clear empties the cart', async () => {
+      const sessionId = await seedCart();
+      await db.cart.addItem(sessionId, {
+        productId: 'p1',
+        name: 'Shirt',
+        sku: 'SH-1',
+        price: 1999,
+        quantity: 1,
+      });
+
+      await db.cart.clear(sessionId);
+      const cart = await db.cart.get(sessionId);
+      expect(cart?.items).toEqual([]);
     });
   });
 }

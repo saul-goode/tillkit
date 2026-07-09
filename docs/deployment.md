@@ -216,6 +216,7 @@ CREATE TABLE cart_items (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   cart_id UUID REFERENCES carts(id) ON DELETE CASCADE,
   product_id UUID NOT NULL,
+  variant_id TEXT,
   name TEXT NOT NULL,
   sku TEXT NOT NULL,
   price INTEGER NOT NULL,
