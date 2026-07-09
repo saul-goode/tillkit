@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { DatabaseAdapter } from '@tillkit/core';
+import { isDuplicateGatewayRefError } from '@tillkit/core';
 import type { PayPalIntegration } from '@tillkit/integration-paypal';
 import {
   PayPalWebhookNotConfiguredError,
@@ -50,38 +51,85 @@ export function createPayPalWebhookRoutes(config: PayPalWebhookConfig) {
       throw err;
     }
 
+    const eventId = (event as { id?: string }).id;
+    const eventType = (event as { event_type?: string }).event_type ?? 'unknown';
+
+    // Without an id there is nothing to deduplicate on, and claiming under a
+    // placeholder would swallow every subsequent id-less event forever. A
+    // verified PayPal event always carries one, so this is unreachable in
+    // practice — but it must fail loudly rather than silently, and no retry
+    // will add the missing field.
+    if (!eventId) {
+      console.error('PayPal webhook rejected: verified event carries no id.');
+      return c.json({ error: 'Webhook event has no id' }, 400);
+    }
+
+    // Claim the delivery. Exactly one process runs side effects; redelivery
+    // is acknowledged without repeating them.
+    const { claimed } = await config.database.webhookEvents.claim({
+      gateway: 'paypal',
+      eventId,
+      eventType,
+    });
+    if (!claimed) {
+      return c.json({ received: true, deduplicated: true });
+    }
+
     try {
       const result = await config.paypal.processWebhookEvent(event);
+      let outcome: 'processed' | 'ignored' = 'processed';
 
-      if (result.type === 'payment_success') {
-        const data = result.data as any;
+      switch (result.type) {
+        case 'payment_success': {
+          const data = result.data as any;
 
-        if (config.onPaymentSuccess) {
-          await config.onPaymentSuccess({
-            orderId: data.orderId,
+          if (config.onPaymentSuccess) {
+            await config.onPaymentSuccess({
+              orderId: data.orderId,
+              captureId: data.captureId,
+              amount: data.amount,
+              currency: data.currency,
+              payerEmail: data.payerEmail ?? null,
+              payerId: data.payerId ?? null,
+              metadata: data.metadata ?? null,
+            });
+          }
+
+          console.log('PayPal payment captured:', {
             captureId: data.captureId,
             amount: data.amount,
-            currency: data.currency,
-            payerEmail: data.payerEmail ?? null,
-            payerId: data.payerId ?? null,
-            metadata: data.metadata ?? null,
           });
+          break;
         }
 
-        console.log('PayPal payment captured:', {
-          captureId: data.captureId,
-          amount: data.amount,
-        });
+        case 'payment_failure': {
+          if (config.onPaymentFailure) {
+            await config.onPaymentFailure({ error: result.data });
+          }
+          break;
+        }
+
+        case 'refund':
+        case 'dispute': {
+          // Recognized, but there is nowhere to route it yet. Spec 020 gives
+          // refunds a handler; until then, record it and move on.
+          console.log(`PayPal ${result.type} event received:`, eventId);
+          break;
+        }
+
+        default: {
+          console.log('Unhandled PayPal webhook event:', eventType);
+          outcome = 'ignored';
+        }
       }
 
-      if (result.type === 'payment_failure' && config.onPaymentFailure) {
-        await config.onPaymentFailure({ error: result.data });
-      }
-
+      await config.database.webhookEvents.complete('paypal', eventId, { outcome });
       return c.json({ received: true });
     } catch (err: any) {
-      // The event was verified; this is a processing failure. Answer with a
-      // retryable status so PayPal redelivers, rather than a false terminal ack.
+      // The event was verified; this is a processing failure. Drop the claim so
+      // PayPal's redelivery can retry, and answer with a retryable status rather
+      // than a false terminal ack.
+      await config.database.webhookEvents.release('paypal', eventId);
       console.error('PayPal webhook processing failed:', err.message);
       return c.json({ error: 'Webhook processing failed' }, 500);
     }
@@ -118,9 +166,14 @@ export async function createOrderFromPayPalCapture({
       return null;
     }
 
-    // Check if order already exists
-    const existing = await database.orders.getByNumber?.(paypalOrder.id);
-    if (existing) return existing.id;
+    // Fast path: this PayPal order already produced a TillKit order.
+    //
+    // The previous check here called `getByNumber(paypalOrder.id)`. Both
+    // adapters key `getByNumber` on TillKit's own `orderNumber` (`TK-…`), so it
+    // could never match a PayPal id: it always fell through and created a
+    // duplicate. It read as defensive code and did nothing.
+    const alreadyCreated = await database.orders.getByGatewayRef('paypal', paypalOrder.id);
+    if (alreadyCreated) return alreadyCreated.id;
 
     // Capture payment if not already captured
     let capture;
@@ -130,27 +183,40 @@ export async function createOrderFromPayPalCapture({
       capture = { id: paypalOrder.id, status: 'COMPLETED', amount: paypalOrder.amount, currency: paypalOrder.currency };
     }
 
-    const order = await database.orders.create({
-      email: '', // PayPal webhooks provide this
-      customerId: getSessionIdFn(),
-      status: 'paid',
-      paymentStatus: 'paid',
-      items: cart.items.map((item) => ({
-        productId: item.productId,
-        name: item.name,
-        sku: item.sku,
-        price: item.price,
-        quantity: item.quantity,
-        lineTotal: item.lineTotal || item.price * item.quantity,
-      })),
-      subtotal: cart.subtotal || cart.items.reduce((sum, i) => sum + i.price * i.quantity, 0),
-      total: capture.amount || cart.subtotal || cart.total || 0,
-      currency: capture.currency?.toUpperCase() || 'USD',
-      // shippingAddress omitted: cart has no shippingAddress
-      shippingAddress: { address1: '', city: '', postalCode: '', country: '' },
-      notes: '',
-      metadata: { paypalOrderId: orderId },
-    });
+    // Insert-and-catch: the unique (gateway, gatewayRef) index arbitrates the
+    // race between capture and webhook. The read above is an optimization only.
+    let order;
+    try {
+      order = await database.orders.create({
+        email: '', // PayPal webhooks provide this
+        customerId: getSessionIdFn(),
+        gateway: 'paypal',
+        gatewayRef: paypalOrder.id,
+        status: 'paid',
+        paymentStatus: 'paid',
+        items: cart.items.map((item) => ({
+          productId: item.productId,
+          name: item.name,
+          sku: item.sku,
+          price: item.price,
+          quantity: item.quantity,
+          lineTotal: item.lineTotal || item.price * item.quantity,
+        })),
+        subtotal: cart.subtotal || cart.items.reduce((sum, i) => sum + i.price * i.quantity, 0),
+        total: capture.amount || cart.subtotal || cart.total || 0,
+        currency: capture.currency?.toUpperCase() || 'USD',
+        // shippingAddress omitted: cart has no shippingAddress
+        shippingAddress: { address1: '', city: '', postalCode: '', country: '' },
+        notes: '',
+        metadata: { paypalOrderId: orderId },
+      });
+    } catch (err) {
+      if (isDuplicateGatewayRefError(err)) {
+        const winner = await database.orders.getByGatewayRef('paypal', paypalOrder.id);
+        if (winner) return winner.id;
+      }
+      throw err;
+    }
 
     const txn = paypal.createTransactionFromCapture(capture as any);
     await database.orders.addTransaction(order.id, txn);

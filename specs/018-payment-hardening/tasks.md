@@ -115,18 +115,18 @@ pnpm monorepo. Packages under `packages/`, reference storefront under `templates
 
 ### Tests for User Story 2
 
-- [ ] T029 [P] [US2] Write idempotency tests in `packages/server/src/__tests__/idempotency.test.ts`: the same Stripe session processed twice yields one order and one inventory decrement; a redelivered event id is acknowledged as `deduplicated`; concurrent success-page + webhook processing for one session yields exactly one order
-- [ ] T030 [P] [US2] Write handler-failure tests in `packages/server/src/__tests__/idempotency.test.ts`: a throwing handler releases its claim (so redelivery can retry) and returns a **retryable** status — never a false 200 ack
+- [x] T029 [P] [US2] Write idempotency tests in `packages/server/src/__tests__/idempotency.test.ts`: the same Stripe session processed twice yields one order and one inventory decrement; a redelivered event id is acknowledged as `deduplicated`; concurrent success-page + webhook processing for one session yields exactly one order
+- [x] T030 [P] [US2] Write handler-failure tests in `packages/server/src/__tests__/idempotency.test.ts`: a throwing handler releases its claim (so redelivery can retry) and returns a **retryable** status — never a false 200 ack
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Make `createOrderFromStripeSession` idempotent in `packages/server/src/routes/webhooks.ts`: pass `gateway: 'stripe'`, `gatewayRef: session.id` to `orders.create`; on `DUPLICATE_GATEWAY_REF` return the existing order via `getByGatewayRef` (insert-and-catch, never check-then-insert)
-- [ ] T032 [US2] Resolve the order email from the Stripe customer object before falling back, and loudly log when a paid order would otherwise be created with `unknown@example.com` (spec 004 gap) in `packages/server/src/routes/webhooks.ts`
-- [ ] T033 [US2] **Delete the broken idempotency check** at `packages/server/src/routes/paypal-webhooks.ts:97` — `database.orders.getByNumber?.(paypalOrder.id)` queries TillKit's `orderNumber` (`TK-…`) with a PayPal order id, can never match, and always falls through to create a duplicate. Replace with `gateway: 'paypal'`, `gatewayRef: paypalOrder.id` insert-and-catch.
-- [ ] T034 [US2] Wrap the Stripe webhook route in the claim/complete/release lifecycle from [contracts/database-adapter.md](./contracts/database-adapter.md#release--why-it-exists) in `packages/server/src/routes/webhooks.ts`. On handler failure, `release` the claim **before** returning the error status — omitting this permanently loses that payment's side effects on retry.
-- [ ] T035 [US2] Apply the same claim/complete/release lifecycle to `packages/server/src/routes/paypal-webhooks.ts`
-- [ ] T036 [US2] Make the Stripe webhook route create the order by default on `payment_success` when no custom `onPaymentSuccess` is supplied (spec 005 FR-003) in `packages/server/src/routes/webhooks.ts` — today a shopper who closes the tab after paying produces a paid-but-orderless store
-- [ ] T037 [US2] Fix the error response in `packages/server/src/routes/webhooks.ts`: a handler that throws after successful signature verification currently returns 400 `{error: 'Invalid signature'}`, which is both misleading and non-retryable in intent. Distinguish verification failure (400, terminal) from processing failure (5xx, retryable).
+- [x] T031 [US2] Make `createOrderFromStripeSession` idempotent in `packages/server/src/routes/webhooks.ts`: pass `gateway: 'stripe'`, `gatewayRef: session.id` to `orders.create`; on `DUPLICATE_GATEWAY_REF` return the existing order via `getByGatewayRef` (insert-and-catch, never check-then-insert)
+- [x] T032 [US2] Resolve the order email from the Stripe customer object before falling back, and loudly log when a paid order would otherwise be created with `unknown@example.com` (spec 004 gap) in `packages/server/src/routes/webhooks.ts`
+- [x] T033 [US2] **Delete the broken idempotency check** at `packages/server/src/routes/paypal-webhooks.ts:97` — `database.orders.getByNumber?.(paypalOrder.id)` queries TillKit's `orderNumber` (`TK-…`) with a PayPal order id, can never match, and always falls through to create a duplicate. Replace with `gateway: 'paypal'`, `gatewayRef: paypalOrder.id` insert-and-catch.
+- [x] T034 [US2] Wrap the Stripe webhook route in the claim/complete/release lifecycle from [contracts/database-adapter.md](./contracts/database-adapter.md#release--why-it-exists) in `packages/server/src/routes/webhooks.ts`. On handler failure, `release` the claim **before** returning the error status — omitting this permanently loses that payment's side effects on retry.
+- [x] T035 [US2] Apply the same claim/complete/release lifecycle to `packages/server/src/routes/paypal-webhooks.ts`
+- [x] T036 [US2] Make the Stripe webhook route create the order by default on `payment_success` when no custom `onPaymentSuccess` is supplied (spec 005 FR-003) in `packages/server/src/routes/webhooks.ts` — today a shopper who closes the tab after paying produces a paid-but-orderless store
+- [x] T037 [US2] Fix the error response in `packages/server/src/routes/webhooks.ts`: a handler that throws after successful signature verification currently returns 400 `{error: 'Invalid signature'}`, which is both misleading and non-retryable in intent. Distinguish verification failure (400, terminal) from processing failure (5xx, retryable).
 
 **Checkpoint**: US1 + US2 both work independently. The trust-critical half of spec 018 is complete.
 

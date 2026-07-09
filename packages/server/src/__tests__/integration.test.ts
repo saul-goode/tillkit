@@ -10,6 +10,7 @@ import type { StripeIntegration } from '@tillkit/integration-stripe';
 function createMockDatabase(): DatabaseAdapter {
   const orders: Order[] = [];
   const carts: Record<string, any> = {};
+  const webhookEvents = new Map<string, any>();
   let orderCounter = 1;
   
   return {
@@ -106,6 +107,8 @@ function createMockDatabase(): DatabaseAdapter {
       }),
       get: async (id) => orders.find(o => o.id === id) || null,
       getByNumber: async () => null,
+      getByGatewayRef: async (gateway, ref) =>
+        orders.find(o => o.gateway === gateway && o.gatewayRef === ref) || null,
       create: async (data) => {
         const order: Order = {
           id: crypto.randomUUID(),
@@ -146,6 +149,29 @@ function createMockDatabase(): DatabaseAdapter {
         }
         throw new Error('Order not found');
       },
+    },
+    webhookEvents: {
+      claim: async ({ gateway, eventId, eventType }) => {
+        const k = `${gateway}:${eventId}`;
+        if (webhookEvents.has(k)) return { claimed: false, existing: webhookEvents.get(k) };
+        webhookEvents.set(k, {
+          id: k,
+          gateway,
+          eventId,
+          eventType,
+          outcome: 'processed',
+          processedAt: new Date(),
+        });
+        return { claimed: true };
+      },
+      complete: async (gateway, eventId, result) => {
+        const row = webhookEvents.get(`${gateway}:${eventId}`);
+        if (row) Object.assign(row, result);
+      },
+      release: async (gateway, eventId) => {
+        webhookEvents.delete(`${gateway}:${eventId}`);
+      },
+      get: async (gateway, eventId) => webhookEvents.get(`${gateway}:${eventId}`) ?? null,
     },
     customers: {
       get: async () => null,
