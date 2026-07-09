@@ -26,32 +26,120 @@ export interface PayPalCapture {
   payerName?: string;
 }
 
+/** Thrown when a webhook arrives but no webhookId is configured. Fail closed. */
+export class PayPalWebhookNotConfiguredError extends Error {
+  constructor() {
+    super(
+      'PayPal webhook received but PAYPAL_WEBHOOK_ID is not configured. ' +
+        'Refusing to process an unverifiable event.',
+    );
+    this.name = 'PayPalWebhookNotConfiguredError';
+  }
+}
+
+/** Thrown when a webhook fails provenance verification. */
+export class PayPalWebhookVerificationError extends Error {
+  constructor(reason: string) {
+    super(`PayPal webhook verification failed: ${reason}`);
+    this.name = 'PayPalWebhookVerificationError';
+  }
+}
+
+/** Headers PayPal signs its webhooks with. */
+const SIGNATURE_HEADERS = [
+  'paypal-auth-algo',
+  'paypal-cert-url',
+  'paypal-transmission-id',
+  'paypal-transmission-sig',
+  'paypal-transmission-time',
+] as const;
+
+export type PayPalHeaders = Headers | Record<string, string | string[] | undefined>;
+
+/** Case-insensitive header lookup across Headers objects and plain records. */
+function readHeader(headers: PayPalHeaders, name: string): string | null {
+  if (typeof (headers as Headers).get === 'function') {
+    return (headers as Headers).get(name);
+  }
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() !== target) continue;
+    if (Array.isArray(value)) return value[0] ?? null;
+    return value == null ? null : String(value);
+  }
+  return null;
+}
+
 function getBaseURL(sandbox?: boolean): string {
   return sandbox
     ? 'https://api-m.sandbox.paypal.com'
     : 'https://api-m.paypal.com';
 }
 
-async function getAccessToken(config: PayPalConfig): Promise<string> {
-  const baseURL = getBaseURL(config.sandbox);
-  const auth = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
-  const res = await fetch(`${baseURL}/v1/oauth2/token`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${auth}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials',
-  });
-  if (!res.ok) {
-    throw new Error(`PayPal auth failed: ${res.status} ${await res.text()}`);
-  }
-  const data = await res.json() as { access_token: string };
-  return data.access_token;
+/** Web-standard base64. `Buffer` is Node-only and would break Workers/Deno. */
+function basicAuth(clientId: string, clientSecret: string): string {
+  return btoa(`${clientId}:${clientSecret}`);
 }
 
 export function paypalIntegration(config: PayPalConfig) {
   const baseURL = getBaseURL(config.sandbox);
+
+  // Token cache is per-instance, never module-global: two integrations with
+  // different credentials must not share a token.
+  let cachedToken: { token: string; expiresAt: number } | null = null;
+  let inFlight: Promise<string> | null = null;
+
+  /** Tokens live ~9h. Refresh 60s early to avoid using one mid-expiry. */
+  async function fetchToken(): Promise<string> {
+    const res = await fetch(`${baseURL}/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${basicAuth(config.clientId, config.clientSecret)}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials',
+    });
+    if (!res.ok) {
+      throw new Error(`PayPal auth failed: ${res.status} ${await res.text()}`);
+    }
+    const data = (await res.json()) as { access_token: string; expires_in: number };
+    cachedToken = {
+      token: data.access_token,
+      expiresAt: Date.now() + (data.expires_in - 60) * 1000,
+    };
+    return data.access_token;
+  }
+
+  async function getToken(): Promise<string> {
+    if (cachedToken && Date.now() < cachedToken.expiresAt) return cachedToken.token;
+    // Concurrent callers share one request rather than stampeding the endpoint.
+    if (!inFlight) {
+      inFlight = fetchToken().finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  }
+
+  /** Authenticated fetch that retries once on 401 with a fresh token. */
+  async function authedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const send = async (token: string) =>
+      fetch(url, {
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string> | undefined),
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+    let res = await send(await getToken());
+    if (res.status === 401) {
+      cachedToken = null;
+      res = await send(await getToken());
+    }
+    return res;
+  }
 
   return {
     // Create a PayPal order from cart
@@ -64,8 +152,6 @@ export function paypalIntegration(config: PayPalConfig) {
         cancelUrl: string;
       }
     ): Promise<PayPalOrder> {
-      const accessToken = await getAccessToken(config);
-
       const purchaseUnits = [{
         amount: {
           currency_code: cart.currency.toUpperCase(),
@@ -97,11 +183,9 @@ export function paypalIntegration(config: PayPalConfig) {
         ...(options?.metadata ? { custom_id: JSON.stringify(options.metadata) } : {}),
       }];
 
-      const res = await fetch(`${baseURL}/v2/checkout/orders`, {
+      const res = await authedFetch(`${baseURL}/v2/checkout/orders`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
           'PayPal-Request-Id': `req_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         },
         body: JSON.stringify({
@@ -138,12 +222,9 @@ export function paypalIntegration(config: PayPalConfig) {
 
     // Capture a PayPal order
     async capturePayment(orderId: string): Promise<PayPalCapture> {
-      const accessToken = await getAccessToken(config);
-      const res = await fetch(`${baseURL}/v2/checkout/orders/${orderId}/capture`, {
+      const res = await authedFetch(`${baseURL}/v2/checkout/orders/${orderId}/capture`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
           'PayPal-Request-Id': `capture_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         },
       });
@@ -177,10 +258,7 @@ export function paypalIntegration(config: PayPalConfig) {
 
     // Get order details
     async getOrder(orderId: string): Promise<PayPalOrder> {
-      const accessToken = await getAccessToken(config);
-      const res = await fetch(`${baseURL}/v2/checkout/orders/${orderId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const res = await authedFetch(`${baseURL}/v2/checkout/orders/${orderId}`);
       if (!res.ok) {
         throw new Error(`PayPal get order failed: ${res.status}`);
       }
@@ -195,21 +273,62 @@ export function paypalIntegration(config: PayPalConfig) {
       };
     },
 
-    // Verify webhook signature
-    handleWebhook(
-      body: string | Buffer,
-      _headers: Record<string, string | string[] | undefined>
-    ): any {
-      // PayPal webhook verification requires calling their verify API
-      // For simplicity, forward to processWebhookEvent which the app can call
-      // after verifying via PayPal API if needed
-      const event = JSON.parse(body.toString());
+    /**
+     * Verify a webhook's provenance with PayPal, then return the parsed event.
+     *
+     * Async because verification is a network call. Throws rather than
+     * returning a falsy value so an unverified event can never be processed by
+     * accident.
+     */
+    async handleWebhook(rawBody: string, headers: PayPalHeaders): Promise<any> {
+      if (!config.webhookId) throw new PayPalWebhookNotConfiguredError();
+
+      const signature: Record<string, string> = {};
+      for (const name of SIGNATURE_HEADERS) {
+        const value = readHeader(headers, name);
+        // Never call verify with partial data — a missing header is a forgery
+        // signal, not something PayPal can adjudicate.
+        if (!value) throw new PayPalWebhookVerificationError(`missing header ${name}`);
+        signature[name] = value;
+      }
+
+      // Parsed exactly once and passed through untransformed: re-serializing a
+      // mutated object changes key order and breaks verification.
+      const event = JSON.parse(rawBody);
+
+      const res = await authedFetch(`${baseURL}/v1/notifications/verify-webhook-signature`, {
+        method: 'POST',
+        body: JSON.stringify({
+          auth_algo: signature['paypal-auth-algo'],
+          cert_url: signature['paypal-cert-url'],
+          transmission_id: signature['paypal-transmission-id'],
+          transmission_sig: signature['paypal-transmission-sig'],
+          transmission_time: signature['paypal-transmission-time'],
+          webhook_id: config.webhookId,
+          webhook_event: event,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new PayPalWebhookVerificationError(
+          `verify endpoint returned ${res.status}: ${await res.text()}`,
+        );
+      }
+
+      // PayPal answers HTTP 200 for both outcomes; the verdict is in the body.
+      const { verification_status: status } = (await res.json()) as {
+        verification_status?: string;
+      };
+      if (status !== 'SUCCESS') {
+        throw new PayPalWebhookVerificationError(`verification_status=${status}`);
+      }
+
       return event;
     },
 
     // Process webhook event
     async processWebhookEvent(event: any): Promise<{
-      type: 'payment_success' | 'payment_failure' | 'refund' | 'other';
+      type: 'payment_success' | 'payment_failure' | 'refund' | 'dispute' | 'other';
       data: unknown;
     }> {
       switch (event.event_type) {
@@ -242,9 +361,17 @@ export function paypalIntegration(config: PayPalConfig) {
             data: event.resource,
           };
         }
-        case 'CUSTOMER.DISPUTE.CREATED': {
+        case 'PAYMENT.CAPTURE.REFUNDED': {
           return {
             type: 'refund',
+            data: event.resource,
+          };
+        }
+        // A dispute is not a refund: no money has moved yet. Mapping it to
+        // `refund` corrupted paymentStatus.
+        case 'CUSTOMER.DISPUTE.CREATED': {
+          return {
+            type: 'dispute',
             data: event.resource,
           };
         }
@@ -255,19 +382,16 @@ export function paypalIntegration(config: PayPalConfig) {
 
     // Create refund
     async refund(captureId: string, amount?: number): Promise<any> {
-      const accessToken = await getAccessToken(config);
       const body: any = {};
       if (amount) {
         body.amount = {
           value: (amount / 100).toFixed(2),
-          currency_code: 'USD', // Should come from original capture
+          currency_code: 'USD', // TODO(T042): derive from the original capture
         };
       }
-      const res = await fetch(`${baseURL}/v2/payments/captures/${captureId}/refund`, {
+      const res = await authedFetch(`${baseURL}/v2/payments/captures/${captureId}/refund`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
           'PayPal-Request-Id': `refund_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         },
         body: Object.keys(body).length ? JSON.stringify(body) : undefined,

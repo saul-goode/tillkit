@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 import type { DatabaseAdapter } from '@tillkit/core';
 import type { PayPalIntegration } from '@tillkit/integration-paypal';
+import {
+  PayPalWebhookNotConfiguredError,
+  PayPalWebhookVerificationError,
+} from '@tillkit/integration-paypal';
 
 export interface PayPalWebhookConfig {
   database: DatabaseAdapter;
@@ -26,8 +30,27 @@ export function createPayPalWebhookRoutes(config: PayPalWebhookConfig) {
   router.post('/paypal', async (c) => {
     const payload = await c.req.text();
 
+    // Verification is a hard gate: an event that fails it never reaches
+    // processing, and its failure is terminal (no retry will help).
+    let event: unknown;
     try {
-      const event = config.paypal.handleWebhook(payload, Object.fromEntries(c.req.raw.headers.entries()));
+      event = await config.paypal.handleWebhook(payload, c.req.raw.headers);
+    } catch (err) {
+      if (err instanceof PayPalWebhookNotConfiguredError) {
+        console.error(
+          'PayPal webhook rejected: PAYPAL_WEBHOOK_ID is not configured. ' +
+            'Events cannot be verified and will not be processed.',
+        );
+        return c.json({ error: 'Webhook verification not configured' }, 400);
+      }
+      if (err instanceof PayPalWebhookVerificationError) {
+        console.error('PayPal webhook rejected:', err.message);
+        return c.json({ error: 'Invalid webhook signature' }, 400);
+      }
+      throw err;
+    }
+
+    try {
       const result = await config.paypal.processWebhookEvent(event);
 
       if (result.type === 'payment_success') {
@@ -57,8 +80,10 @@ export function createPayPalWebhookRoutes(config: PayPalWebhookConfig) {
 
       return c.json({ received: true });
     } catch (err: any) {
-      console.error('PayPal webhook error:', err.message);
-      return c.json({ error: 'Webhook processing failed' }, 400);
+      // The event was verified; this is a processing failure. Answer with a
+      // retryable status so PayPal redelivers, rather than a false terminal ack.
+      console.error('PayPal webhook processing failed:', err.message);
+      return c.json({ error: 'Webhook processing failed' }, 500);
     }
   });
 
