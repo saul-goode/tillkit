@@ -68,16 +68,17 @@ A developer lists products with `{ limit, offset, sort, order, filters }` and se
 
 - **FR-001**: `@tillkit/core` MUST define `DatabaseAdapter` with four namespaces (`products`, `cart`, `orders`, `customers`) plus `setup(features)`; core MUST NOT import adapter code.
 - **FR-002**: Every shipped adapter MUST implement the full contract with identical observable semantics (null-on-missing reads, throw-on-failed writes, quantity ≤ 0 removes cart item). [GAP — Supabase/PocketBase diverge on several points listed in Known Gaps]
-- **FR-003**: `setup(features)` MUST provision all storage required by the enabled features, idempotently. [GAP — Supabase `setup()` builds SQL strings but never executes them; it reports `created: true` without creating anything]
+- **FR-003**: `setup(features)` MUST provision all storage required by the enabled features, idempotently. An adapter that cannot execute DDL MUST report `created: false` and surface the SQL the operator has to run, never claim success.
 - **FR-004**: All monetary fields MUST be stored and returned as integer cents with no transformation in the adapter layer.
 - **FR-005**: User-supplied values used in filters or search queries MUST be escaped for the backend's query syntax. [GAP — PocketBase escapes only `"`; Supabase interpolates search text raw into a PostgREST `.or(...ilike...)` expression]
 - **FR-006**: `cart.updateItem` MUST recompute the item's line total from its stored unit price.
-- **FR-011**: `cart.get` MUST return items in the contract's `CartItem` shape (camelCase, with a stable `id` addressable by `updateItem` / `removeItem`), and `subtotal` MUST equal the sum of `price × quantity` over those items. An adapter MUST NOT return raw backend rows.
-- **FR-012**: `cart.addItem` for a `(productId, variantId)` pair already in the cart MUST increment that line's quantity rather than append a second line.
 - **FR-007**: `orders.addTransaction` MUST append a transaction linked to the order and return the refreshed order.
 - **FR-008**: List operations MUST support `limit`, `offset`, `sort`, `order`, and equality `filters`, returning `{ items, total, page, perPage, hasMore }`.
 - **FR-009**: Order numbers MUST be unique per store; generation MUST tolerate collisions. [GAP]
 - **FR-010**: Adapter field-name mapping (camelCase ↔ backend naming) MUST be applied on both read and write paths. [GAP — Supabase `orders.update` spreads camelCase keys onto snake_case columns]
+- **FR-011**: `cart.get` MUST return items in the contract's `CartItem` shape (camelCase, with a stable `id` addressable by `updateItem` / `removeItem`), and `subtotal` MUST equal the sum of `price × quantity` over those items. An adapter MUST NOT return raw backend rows.
+- **FR-012**: `cart.addItem` for a `(productId, variantId)` pair already in the cart MUST increment that line's quantity rather than append a second line.
+- **FR-013**: The PocketBase adapter MUST target PocketBase ≥0.23 and MUST refuse to provision against an older server rather than partially create collections (spec 021).
 
 ### Key Entities
 
@@ -96,9 +97,9 @@ A developer lists products with `{ limit, offset, sort, order, filters }` and se
 
 ## Assumptions
 
-- PocketBase requires superuser auth (`adminToken`) for collection creation; unauthenticated `setup()` only works on a fresh unsecured instance.
-- The `adminEmail`/`adminPassword` fields in the PocketBase config are accepted but unused; only `adminToken` is honored. Either wire them or remove them.
-- Cart items, order items, transactions, and addresses are stored relationally where the backend supports it (PocketBase: separate collections; Supabase: separate tables) — this is an adapter-internal detail invisible to the contract.
+- PocketBase requires superuser auth for collection creation. The adapter takes an `adminToken`; `db:setup` and `migrate` also accept `POCKETBASE_ADMIN_EMAIL` + `POCKETBASE_ADMIN_PASSWORD` and exchange them for one via the `_superusers` auth collection.
+- The `adminEmail`/`adminPassword` fields on `PocketbaseAdapterConfig` are accepted but unused; only `adminToken` is honored. Either wire them or remove them. [GAP]
+- Structured collections diverge by backend and this is invisible to the contract: PocketBase stores cart items, order items, and transactions as JSON columns; Supabase stores them as related tables.
 
 ## Known Gaps
 
@@ -124,12 +125,15 @@ Discovered while implementing 018 US4 (cart, verified against a live PocketBase 
 - **Neither adapter deduplicated `addItem`**, so adding the same product twice produced two lines (FR-012).
 - Cart behavior is now covered by seven cases in the shared contract suite. The absence of *any* cart coverage is what let a completely dead cart ship.
 
+Closed by spec 021 (PocketBase ≥0.23 compatibility):
+
+- ~~The adapter emits the PocketBase v0.22 `schema:` format~~ — it now emits `fields:` with flat field props, declares `created`/`updated` as `autodate`, and `setup()` refuses a pre-0.23 server rather than half-provisioning it. The contract suite runs against v0.39.6.
+- ~~`docs/deployment.md` contained two conflicting `cart_items` DDL blocks~~ — the PocketBase section no longer hand-writes SQL at all; it calls `db:setup`.
+
 Still open:
 
-- The adapter emits the PocketBase **v0.22 `schema:` format**, renamed to `fields:` in v0.23. TillKit cannot provision a store on any PocketBase ≥ 0.23 (current release: 0.39.x). This is a hard compatibility ceiling and needs its own spec.
 - Supabase `orders.update` doesn't snake_case its payload — camelCase updates target nonexistent columns.
 - PocketBase escapes only double quotes in filters; Supabase escapes nothing in `search()`.
-- `docs/deployment.md` contains two conflicting `cart_items` DDL blocks (one `TEXT` keyed with no default, one `UUID` keyed). They need reconciling.
 - The Supabase half of the contract suite is env-gated and therefore unverified in CI; parity is asserted from the contract, not demonstrated. **The seven new cart cases are unrun against Supabase** — its cart fixes are written to the contract, not proven by it.
 - `decrementInventoryForOrder` ignores `variantId` and always decrements product-level inventory, while a variant may carry its own `inventory`. Revalidation reads variant inventory, so the two can disagree.
 

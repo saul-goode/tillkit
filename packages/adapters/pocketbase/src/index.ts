@@ -46,32 +46,93 @@ export const WEBHOOK_EVENT_INDEXES = {
 } as const;
 
 /**
- * Field builders for the PocketBase v0.22 schema format.
+ * The oldest PocketBase whose collection API this adapter speaks.
  *
- * PocketBase validates `options` per field type and rejects the collection
- * outright when they are missing: `json` requires `maxSize`, `select` requires
- * `maxSelect` and `values`. Passing `values` at the top level (as this adapter
- * previously did) silently produces `validation_required` on save — which is
- * why `setup()` never actually worked and the docs told users to build
- * collections by hand.
+ * v0.23 renamed the collection-create `schema:` key to `fields:` and moved
+ * per-type settings from a nested `options` object onto the field itself. An
+ * older server rejects `fields:` outright; a newer server accepts `schema:` with
+ * HTTP 200 and silently creates a collection with **no fields at all**. There is
+ * no payload shape that is safe to send blind, so `setup()` checks the version
+ * first (spec 021 FR-005).
+ */
+export const MIN_POCKETBASE_VERSION = '0.23.0';
+
+export class UnsupportedPocketBaseVersionError extends Error {
+  constructor(url: string) {
+    super(
+      `The PocketBase at ${url} is older than v${MIN_POCKETBASE_VERSION}, which TillKit requires. ` +
+        'Upgrade to a current PocketBase release and re-run setup. ' +
+        'Nothing was created.',
+    );
+    this.name = 'UnsupportedPocketBaseVersionError';
+  }
+}
+
+/**
+ * Refuse to provision against a pre-0.23 server.
+ *
+ * There is no version field on `/api/health`, so this probes for the
+ * `_superusers` auth collection, which v0.23 introduced when it replaced the
+ * `/api/admins` routes. An unauthenticated POST answers 404 on older servers and
+ * 400 (validation) on supported ones — any non-404 means the route exists.
+ */
+export async function assertSupportedVersion(url: string): Promise<void> {
+  const res = await fetch(`${url.replace(/\/$/, '')}/api/collections/_superusers/auth-with-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (res.status === 404) throw new UnsupportedPocketBaseVersionError(url);
+}
+
+/**
+ * Field builders for the PocketBase ≥0.23 collection format.
+ *
+ * Per-type settings are flat properties on the field. `json` requires `maxSize`
+ * and `select` requires `maxSelect` + `values`; omitting them, or nesting them
+ * under `options` as the pre-0.23 format did, fails with `validation_required`.
  */
 const JSON_MAX_SIZE = 2_000_000;
 
-const text = (name: string, required = false) => ({ name, type: 'text', required, options: {} });
-const number = (name: string, required = false) => ({ name, type: 'number', required, options: {} });
-const email = (name: string, required = false) => ({ name, type: 'email', required, options: {} });
+const text = (name: string, required = false) => ({ name, type: 'text', required });
+const number = (name: string, required = false) => ({ name, type: 'number', required });
+const email = (name: string, required = false) => ({ name, type: 'email', required });
 const json = (name: string, required = false) => ({
   name,
   type: 'json',
   required,
-  options: { maxSize: JSON_MAX_SIZE },
+  maxSize: JSON_MAX_SIZE,
 });
 const select = (name: string, values: string[], required = false) => ({
   name,
   type: 'select',
   required,
-  options: { maxSelect: 1, values },
+  maxSelect: 1,
+  values,
 });
+
+/**
+ * `created` and `updated` were implicit system fields before v0.23 and must now
+ * be declared. The adapter depends on both: `products.list` and `orders.list`
+ * sort by `-created` (a 400 without it), and the webhook ledger falls back to
+ * `record.created` for `processedAt`.
+ */
+const autodate = (name: string, onUpdate: boolean) => ({
+  name,
+  type: 'autodate',
+  onCreate: true,
+  onUpdate,
+});
+
+/** Every collection carries these. */
+const TIMESTAMPS = [autodate('created', false), autodate('updated', true)];
+
+/**
+ * The wire format lives here and nowhere else. `migrate.ts` builds the same
+ * fields against existing stores and must not carry its own copy.
+ */
+export const pbField = { text, number, email, json, select, autodate } as const;
+export const TIMESTAMP_FIELDS = TIMESTAMPS;
 
 // Local types matching the DatabaseAdapter interface
 interface QueryOptions {
@@ -568,6 +629,12 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
 
     // Setup — create collections based on enabled features
     async setup(features: StoreFeatures): Promise<SetupResult> {
+      // Before writing anything. A pre-0.23 server rejects the `fields:` key
+      // with a 400, but the reverse — sending `schema:` to a modern server —
+      // returns 200 and creates a collection with no fields at all. There is no
+      // shape that is safe to send blind, so refuse rather than half-provision.
+      await assertSupportedVersion(config.url);
+
       const createdCollections: string[] = [];
       let created = false;
 
@@ -607,7 +674,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         await pb.collections.create({
           name: 'products',
           type: 'base',
-          schema: fields,
+          fields: [...fields, ...TIMESTAMPS],
           indexes: [PRODUCT_INDEXES.slug],
         });
         createdCollections.push('products');
@@ -619,13 +686,14 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         await pb.collections.create({
           name: 'collections',
           type: 'base',
-          schema: [
+          fields: [
             text('slug', true),
             text('name', true),
             text('description'),
             json('image'),
             json('seo'),
             number('sortOrder', true),
+            ...TIMESTAMPS,
           ],
           indexes: ['CREATE UNIQUE INDEX `idx_collections_slug` ON `collections` (`slug`)'],
         });
@@ -638,7 +706,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         await pb.collections.create({
           name: 'carts',
           type: 'base',
-          schema: [
+          fields: [
             text('sessionId', true),
             text('customerId'),
             json('items'),
@@ -648,6 +716,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
             number('totalDiscount'),
             number('total'),
             text('currency'),
+            ...TIMESTAMPS,
           ],
         });
         createdCollections.push('carts');
@@ -659,7 +728,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         await pb.collections.create({
           name: 'orders',
           type: 'base',
-          schema: [
+          fields: [
             text('orderNumber', true),
             text('customerId'),
             text('email', true),
@@ -680,6 +749,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
             json('metadata'),
             text('gateway'),
             text('gatewayRef'),
+            ...TIMESTAMPS,
           ],
           indexes: [ORDER_INDEXES.orderNumber, ORDER_INDEXES.gatewayRef],
         });
@@ -692,13 +762,14 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         await pb.collections.create({
           name: 'processed_webhook_events',
           type: 'base',
-          schema: [
+          fields: [
             text('gateway', true),
             text('eventId', true),
             text('eventType', true),
             select('outcome', ['processed', 'ignored', 'failed'], true),
             text('orderId'),
             text('processedAt'),
+            ...TIMESTAMPS,
           ],
           indexes: [WEBHOOK_EVENT_INDEXES.gatewayEventId],
         });
@@ -711,7 +782,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
         await pb.collections.create({
           name: 'customers',
           type: 'base',
-          schema: [
+          fields: [
             email('email', true),
             text('firstName'),
             text('lastName'),
@@ -719,6 +790,7 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
             json('addresses'),
             text('defaultAddressId'),
             json('metadata'),
+            ...TIMESTAMPS,
           ],
         });
         createdCollections.push('customers');

@@ -28,10 +28,13 @@ The CLI will prompt you for:
 
 Create a `.env` file in your project root:
 
-**Required (PocketBase):**
+**Required (PocketBase v0.23+):**
 ```env
 POCKETBASE_URL=https://your-pocketbase-instance.com
+# Superuser auth, needed by db:setup and migrate. Either the token, or both credentials.
 POCKETBASE_ADMIN_TOKEN=your-admin-token
+# POCKETBASE_ADMIN_EMAIL=admin@example.com
+# POCKETBASE_ADMIN_PASSWORD=...
 ```
 
 **Required (Supabase):**
@@ -56,120 +59,38 @@ ADMIN_TOKEN=your-secure-token-for-admin
 
 #### PocketBase Setup
 
-1. Install PocketBase from [pocketbase.io](https://pocketbase.io/)
-2. Create collections:
+TillKit requires **PocketBase v0.23 or newer**. v0.23 changed the collection
+format; an older server accepts a collection payload with HTTP 200 and creates
+no fields, so `setup()` refuses to run against one rather than half-provision.
 
-```sql
--- products
-CREATE TABLE products (
-  id TEXT PRIMARY KEY,
-  slug TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT,
-  price INTEGER NOT NULL,
-  compare_at_price INTEGER,
-  images JSON,
-  variants JSON,
-  options JSON,
-  inventory JSON,
-  seo JSON,
-  metadata JSON,
-  status TEXT DEFAULT 'active',
-  created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-  updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-);
+1. Install PocketBase from [pocketbase.io](https://pocketbase.io/) and create a superuser:
 
--- carts
-CREATE TABLE carts (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL UNIQUE,
-  subtotal INTEGER DEFAULT 0,
-  total_tax INTEGER DEFAULT 0,
-  total_shipping INTEGER DEFAULT 0,
-  total INTEGER DEFAULT 0,
-  currency TEXT DEFAULT 'USD',
-  created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-  updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-);
+   ```bash
+   ./pocketbase superuser upsert admin@example.com <password>
+   ./pocketbase serve
+   ```
 
--- cart_items
-CREATE TABLE cart_items (
-  id TEXT PRIMARY KEY,
-  cart_id TEXT REFERENCES carts(id) ON DELETE CASCADE,
-  product_id TEXT NOT NULL,
-  variant_id TEXT,
-  name TEXT NOT NULL,
-  sku TEXT NOT NULL,
-  price INTEGER NOT NULL,
-  quantity INTEGER NOT NULL,
-  image JSON,
-  line_total INTEGER NOT NULL
-);
+2. Provision the collections:
 
--- orders
-CREATE TABLE orders (
-  id TEXT PRIMARY KEY,
-  order_number TEXT UNIQUE NOT NULL,
-  customer_id TEXT,
-  email TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  payment_status TEXT DEFAULT 'pending',
-  fulfillment_status TEXT DEFAULT 'unfulfilled',
-  subtotal INTEGER DEFAULT 0,
-  total_tax INTEGER DEFAULT 0,
-  total_shipping INTEGER DEFAULT 0,
-  total_discount INTEGER DEFAULT 0,
-  total INTEGER DEFAULT 0,
-  currency TEXT DEFAULT 'USD',
-  shipping_address JSON,
-  billing_address JSON,
-  notes TEXT,
-  metadata JSON,
-  created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-  updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-);
+   ```bash
+   POCKETBASE_URL=https://your-pocketbase-instance.com \
+   POCKETBASE_ADMIN_EMAIL=admin@example.com \
+   POCKETBASE_ADMIN_PASSWORD=<password> \
+   pnpm db:setup
+   ```
 
--- transactions
-CREATE TABLE transactions (
-  id TEXT PRIMARY KEY,
-  order_id TEXT REFERENCES orders(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,
-  status TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  currency TEXT NOT NULL,
-  gateway TEXT NOT NULL,
-  parent_id TEXT,
-  processed_at TEXT,
-  metadata JSON
-);
+   This creates `products`, `carts`, `orders`, `customers`, and
+   `processed_webhook_events` with their fields, `created`/`updated` timestamps,
+   and the unique indexes payment idempotency depends on. Re-running is a no-op.
 
--- customers
-CREATE TABLE customers (
-  id TEXT PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
-  first_name TEXT,
-  last_name TEXT,
-  phone TEXT,
-  default_address_id TEXT,
-  metadata JSON,
-  created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-  updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-);
+   PocketBase collections are created through its API, not with SQL. Do not
+   hand-write DDL, and do not build collections in the dashboard — the schema in
+   `packages/adapters/pocketbase/src/index.ts` is the single source of truth.
 
--- addresses
-CREATE TABLE addresses (
-  id TEXT PRIMARY KEY,
-  customer_id TEXT REFERENCES customers(id) ON DELETE CASCADE,
-  name TEXT,
-  line1 TEXT,
-  line2 TEXT,
-  city TEXT,
-  province TEXT,
-  postal_code TEXT,
-  country TEXT,
-  is_default BOOLEAN DEFAULT FALSE
-);
-```
+3. **Upgrading a store created before spec 018**: run `pnpm migrate` instead. It
+   adds the missing `gateway` / `gatewayRef` fields and the unique indexes
+   without touching your data. Skipping it means idempotency fails open —
+   duplicate orders are created and nothing looks wrong.
 
 #### Supabase Setup
 

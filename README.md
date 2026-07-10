@@ -22,6 +22,9 @@ TillKit is an open-source e-commerce commerce platform/starter kit that can be d
 
 ## 🚀 Quick Start
 
+**Requirements**: Node.js 18+, pnpm, and a database — either **PocketBase v0.23+**
+(older releases are rejected: v0.23 changed the collection format) or Supabase.
+
 ```bash
 # Create a new TillKit project
 npm create tillkit
@@ -33,6 +36,9 @@ pnpm install
 # Configure environment
 cp .env.example .env
 # Edit .env with your database credentials
+
+# Provision collections + seed demo products (PocketBase)
+pnpm db:setup
 
 # Run development server
 pnpm dev

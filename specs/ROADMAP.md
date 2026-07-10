@@ -10,7 +10,8 @@ These four, plus closing the `[GAP]`-tagged FRs in specs 001/004/005/009, are wh
 
 | # | Spec | Status | Why it's a priority |
 |---|------|--------|---------------------|
-| 1 | [018 Payment Hardening](018-payment-hardening/spec.md) | Proposed | PayPal webhooks are processed **unverified**; order creation is **non-idempotent**. Trust-critical. |
+| 0 | [021 PocketBase ≥0.23 Compatibility](021-pocketbase-compatibility/spec.md) | Implemented | `setup()` could not provision a store on any PocketBase newer than v0.22 — a pre-0.23 payload returns HTTP 200 and creates **zero fields**. Blocked every new user at first run. |
+| 1 | [018 Payment Hardening](018-payment-hardening/spec.md) | Partial | US1 (PayPal webhook verification), US2 (idempotency), US4 (checkout revalidation) **done**. Remaining: Phase 6 polish + spec 020 (operator refunds). |
 | 2 | [017 Customer Accounts & Auth](017-customer-accounts/spec.md) | Proposed | Existing prototype has no password verification and forgeable sessions; admin (spec 009) needs the same session mechanism to close its zero-auth gap. |
 | 3 | [016 Transactional Email](016-transactional-email/spec.md) | Partial | Providers built (SendGrid/Resend), wired to nothing. Order confirmations are table stakes; also unblocks password reset for 017. |
 | 4 | [019 Project Operations](019-project-operations/spec.md) | Partial | LICENSE + CI + artifact untracking **done**. Remaining: publishing via changesets, docs correction, contribution guides. |
@@ -48,3 +49,5 @@ Each of these is substantial working code with zero consumers. Every one should 
 - 017 before finishing 009's auth gap; they share the session mechanism.
 - 016 unblocks 017's password reset and verification flows.
 - 019's LICENSE + CI items are afternoon-sized and unblock everything socially; do them first even though the spec ranks fourth overall.
+- 020 (operator refunds) carries 018's deferred User Story 3 and is gated on 017 (admin auth): a refund endpoint on today's unauthenticated `/admin` would expose a money-movement button to any visitor.
+- 021 was discovered while implementing 018 and ranks above everything: a developer following the README could not get past `db:setup`.

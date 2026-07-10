@@ -18,7 +18,7 @@
     "hono": "^4.0.0",
     "@hono/node-server": "^1.8.0",
     "@tillkit/integration-search": "workspace:*",
-    "pocketbase": "^0.21.0"
+    "pocketbase": "^0.27.0"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

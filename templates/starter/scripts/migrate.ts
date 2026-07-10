@@ -13,6 +13,9 @@ import {
   ORDER_INDEXES,
   PRODUCT_INDEXES,
   WEBHOOK_EVENT_INDEXES,
+  TIMESTAMP_FIELDS,
+  assertSupportedVersion,
+  pbField,
 } from '@tillkit/adapter-pocketbase';
 
 const url = process.env.POCKETBASE_URL || 'http://localhost:8090';
@@ -20,13 +23,8 @@ const adminToken = process.env.POCKETBASE_ADMIN_TOKEN;
 const adminEmail = process.env.POCKETBASE_ADMIN_EMAIL;
 const adminPassword = process.env.POCKETBASE_ADMIN_PASSWORD;
 
-const text = (name: string, required = false) => ({ name, type: 'text', required, options: {} });
-const select = (name: string, values: string[], required = false) => ({
-  name,
-  type: 'select',
-  required,
-  options: { maxSelect: 1, values },
-});
+// Field shape is the adapter's business; a second copy here would drift.
+const { text, select } = pbField;
 
 type Change = { description: string; applied: boolean };
 const changes: Change[] = [];
@@ -42,7 +40,9 @@ async function authenticate(pb: PocketBase) {
     return;
   }
   if (adminEmail && adminPassword) {
-    await pb.admins.authWithPassword(adminEmail, adminPassword);
+    // `_superusers` is an ordinary auth collection since v0.23; the old
+    // `/api/admins` routes are gone. `pb.admins` is a deprecated alias.
+    await pb.collection('_superusers').authWithPassword(adminEmail, adminPassword);
     return;
   }
   throw new Error(
@@ -67,10 +67,11 @@ async function ensureCollection(
   opts: { fields?: any[]; indexes?: string[] },
 ) {
   const collection = await pb.collections.getOne(collectionName);
-  const schema: any[] = (collection as unknown as { schema?: any[] }).schema ?? [];
+  const existing: any[] = (collection as unknown as { fields?: any[] }).fields ?? [];
   const existingIndexes: string[] = (collection as unknown as { indexes?: string[] }).indexes ?? [];
 
-  const haveFields = new Set(schema.map((f) => f.name));
+  // Includes system fields (id, created, ...); they must survive the update.
+  const haveFields = new Set(existing.map((f) => f.name));
   const missingFields = (opts.fields ?? []).filter((f) => !haveFields.has(f.name));
   for (const field of opts.fields ?? []) {
     record(`${collectionName}.${field.name}`, missingFields.includes(field));
@@ -85,7 +86,7 @@ async function ensureCollection(
   if (missingFields.length === 0 && missingIndexes.length === 0) return;
 
   await pb.collections.update(collection.id, {
-    schema: [...schema, ...missingFields],
+    fields: [...existing, ...missingFields],
     indexes: [...existingIndexes, ...missingIndexes],
   });
 }
@@ -102,6 +103,9 @@ async function collectionExists(pb: PocketBase, name: string): Promise<boolean> 
 async function migratePocketBase() {
   const pb = new PocketBase(url);
   pb.autoCancellation(false);
+  // Refuse before touching anything: a pre-0.23 server silently accepts a
+  // collection update that drops every field.
+  await assertSupportedVersion(url);
   await authenticate(pb);
 
   console.log(`Migrating PocketBase at ${url}\n`);
@@ -125,13 +129,14 @@ async function migratePocketBase() {
     await pb.collections.create({
       name: 'processed_webhook_events',
       type: 'base',
-      schema: [
+      fields: [
         text('gateway', true),
         text('eventId', true),
         text('eventType', true),
         select('outcome', ['processed', 'ignored', 'failed'], true),
         text('orderId'),
         text('processedAt'),
+        ...TIMESTAMP_FIELDS,
       ],
       indexes: [WEBHOOK_EVENT_INDEXES.gatewayEventId],
     });

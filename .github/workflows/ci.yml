@@ -36,12 +36,14 @@ jobs:
       # live in the DB, not in adapter code. Without this, those tests skip.
       - name: Start PocketBase
         env:
-          PB_VERSION: 0.22.47
+          # Must be >= 0.23 (TillKit's floor, spec 021). `admin create` was
+          # replaced by `superuser upsert` in the same release.
+          PB_VERSION: 0.39.6
         run: |
           curl -fsSL -o pb.zip \
             "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip"
           unzip -q pb.zip -d pb
-          ./pb/pocketbase admin create test@test.com test123456 --dir=./pb_data
+          ./pb/pocketbase superuser upsert test@test.com test123456 --dir=./pb_data
           ./pb/pocketbase serve --dir=./pb_data --http=127.0.0.1:8090 &
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8090/api/health >/dev/null && break

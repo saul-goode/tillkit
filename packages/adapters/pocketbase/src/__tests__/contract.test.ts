@@ -31,7 +31,7 @@ if (!url) {
 } else {
   runContractTests('pocketbase', async () => {
     const pb = new PocketBase(url);
-    await pb.admins.authWithPassword(adminEmail, adminPassword);
+    await pb.collection('_superusers').authWithPassword(adminEmail, adminPassword);
     const adapter = pocketbaseAdapter({ url, adminToken: pb.authStore.token });
 
     // Provision once. setup() is create-if-missing, so this is a no-op after

@@ -1,10 +1,29 @@
+import PocketBase from 'pocketbase';
 import { pocketbaseAdapter, type PocketbaseAdapterConfig } from '@tillkit/adapter-pocketbase';
 import { getDefaultFeatures } from '@tillkit/core';
 
 const url = process.env.POCKETBASE_URL || 'http://localhost:8090';
-const adminToken = process.env.POCKETBASE_ADMIN_TOKEN;
+const adminEmail = process.env.POCKETBASE_ADMIN_EMAIL;
+const adminPassword = process.env.POCKETBASE_ADMIN_PASSWORD;
 
-// Collection creation requires superuser auth on any non-fresh instance.
+/**
+ * Collection creation requires superuser auth. Accept either a token or the
+ * credentials, matching `migrate.ts` — asking for a token is a poor first-run
+ * experience when the user just created a superuser on the command line.
+ */
+async function resolveAdminToken(): Promise<string | undefined> {
+  if (process.env.POCKETBASE_ADMIN_TOKEN) return process.env.POCKETBASE_ADMIN_TOKEN;
+  if (adminEmail && adminPassword) {
+    const pb = new PocketBase(url);
+    // `_superusers` is an ordinary auth collection since PocketBase v0.23.
+    await pb.collection('_superusers').authWithPassword(adminEmail, adminPassword);
+    return pb.authStore.token;
+  }
+  return undefined;
+}
+
+const adminToken = await resolveAdminToken();
+
 const config: PocketbaseAdapterConfig = { url };
 if (adminToken) config.adminToken = adminToken;
 
@@ -34,7 +53,10 @@ const seedProducts = [
 async function main() {
   console.log('Setting up PocketBase at', url);
   if (!adminToken) {
-    console.log('No POCKETBASE_ADMIN_TOKEN set — this only works on a fresh, unsecured instance.');
+    console.log(
+      'No superuser auth. Set POCKETBASE_ADMIN_TOKEN, or ' +
+        'POCKETBASE_ADMIN_EMAIL + POCKETBASE_ADMIN_PASSWORD. Collection creation will likely fail.',
+    );
   }
 
   const setup = await db.setup(getDefaultFeatures());
