@@ -89,6 +89,13 @@ export { createPayPalWebhookRoutes, createOrderFromPayPalCapture } from './route
 export { createAuthRoutes, requireAuth, createSessionMiddleware } from './routes/auth.js';
 export type { InventoryWebhookConfig } from './inventory.js';
 export { decrementInventoryForOrder } from './inventory.js';
+export { revalidateCart } from './checkout.js';
+export type {
+  CartRevalidationResult,
+  CartPriceChange,
+  CartStockIssue,
+  CartRemovedItem,
+} from './checkout.js';
 
 // Export themes
 export * from './themes/index.js';

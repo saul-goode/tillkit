@@ -166,7 +166,7 @@ describe('starter runtime smoke test', () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text).toContain('Welcome to TillKit');
+    expect(text).toContain('Open-source e-commerce starter');
     expect(text).toContain('Test Product');
   });
 

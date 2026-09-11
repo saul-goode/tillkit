@@ -39,7 +39,48 @@ export function setSessionCookie(c: any, sessionId: string) {
   c.header(
     'Set-Cookie',
     `sessionId=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
+    { append: true },
   );
+}
+
+/**
+ * Escape a string for interpolation into HTML text.
+ *
+ * `layout()` interpolates `flashMessage` raw, and the messages built from
+ * revalidation carry product names straight out of the database.
+ */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * A one-shot message carried across a redirect in a cookie.
+ *
+ * `take` clears it, so a message shown once is not shown again on refresh.
+ * Values are URI-encoded because a cookie may not contain `;` or `,`.
+ */
+const FLASH_COOKIE = 'tillkit_flash';
+
+export function setFlash(c: any, message: string) {
+  c.header(
+    'Set-Cookie',
+    `${FLASH_COOKIE}=${encodeURIComponent(message)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30`,
+    { append: true },
+  );
+}
+
+export function takeFlash(c: any): string | undefined {
+  const match = (c.req.header('cookie') || '').match(new RegExp(`${FLASH_COOKIE}=([^;]+)`));
+  if (!match) return undefined;
+  c.header('Set-Cookie', `${FLASH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`, {
+    append: true,
+  });
+  return decodeURIComponent(match[1]);
 }
 
 // HTML Layout

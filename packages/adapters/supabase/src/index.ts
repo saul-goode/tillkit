@@ -1,7 +1,13 @@
 // Supabase Database Adapter for TillKit
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { DatabaseAdapter, StoreFeatures } from '@tillkit/core';
+import { createClient } from '@supabase/supabase-js';
+import type {
+  DatabaseAdapter,
+  StoreFeatures,
+  PaymentGateway,
+  ProcessedWebhookEvent,
+} from '@tillkit/core';
 import type { SetupResult } from '@tillkit/core';
+import { DuplicateGatewayRefError } from '@tillkit/core';
 
 // Local types
 interface QueryOptions {
@@ -40,6 +46,9 @@ interface CartItemInput {
 interface OrderInput {
   customerId?: string;
   email: string;
+  /** Gateway + its payment reference. Together they make creation idempotent. */
+  gateway?: PaymentGateway;
+  gatewayRef?: string;
   status?: 'pending' | 'confirmed' | 'paid' | 'fulfilled' | 'shipped' | 'delivered' | 'cancelled' | 'refunded';
   paymentStatus?: 'pending' | 'authorized' | 'paid' | 'partially_refunded' | 'refunded' | 'failed';
   fulfillmentStatus?: 'unfulfilled' | 'partially_fulfilled' | 'fulfilled' | 'returned';
@@ -195,19 +204,25 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
           .select('*,cart_items(*)')
           .eq('session_id', sessionId)
           .single();
-        
+
         if (error || !cart) return null;
-        
+
+        // cart_items rows are snake_case; the contract returns CartItem.
+        const items = (cart.cart_items || []).map(toCartItem);
+        // Derive totals from the items rather than trusting the stored column:
+        // it cannot drift out of sync with what the shopper is about to be charged.
+        const subtotal = items.reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
+
         return {
           ...cart,
-          items: cart.cart_items || [],
+          items,
           id: cart.id,
           sessionId: cart.session_id,
           currency: cart.currency || 'USD',
-          subtotal: cart.subtotal || 0,
+          subtotal,
           totalTax: cart.total_tax || 0,
           totalShipping: cart.total_shipping || 0,
-          total: cart.total || 0,
+          total: subtotal,
           createdAt: new Date(cart.created_at),
           updatedAt: new Date(cart.updated_at),
         };
@@ -261,12 +276,22 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
         // Get cart
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
-        
+
+        // Adding the same product/variant again bumps the quantity rather than
+        // creating a second line, matching what a shopper expects from a cart.
+        const existing = (cart.items || []).find(
+          (it: any) => it.productId === item.productId && it.variantId === item.variantId,
+        );
+        if (existing) {
+          return this.updateItem(sessionId, existing.id, existing.quantity + item.quantity);
+        }
+
         const { error } = await supabase
           .from('cart_items')
           .insert({
             cart_id: cart.id,
             product_id: item.productId,
+            variant_id: item.variantId ?? null,
             name: item.name,
             sku: item.sku,
             price: item.price,
@@ -274,7 +299,7 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
             image: item.image,
             line_total: item.price * item.quantity,
           });
-        
+
         if (error) throw error;
         return this.get(sessionId) as any;
       },
@@ -282,16 +307,22 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
       async updateItem(sessionId: string, itemId: string, quantity: number) {
         const cart = await this.get(sessionId);
         if (!cart) throw new Error('Cart not found');
-        
-        if (quantity === 0) {
+
+        // `<= 0`, not `=== 0`: a negative quantity must remove the line, not
+        // persist a negative one that would credit the shopper at checkout.
+        if (quantity <= 0) {
           return this.removeItem(sessionId, itemId);
         }
-        
+
+        // Read the item's real unit price so line_total reflects it (spec 001 FR-006).
+        const existing = (cart.items || []).find((it: any) => it.id === itemId);
+        const price = existing?.price ?? 0;
+
         const { error } = await supabase
           .from('cart_items')
-          .update({ quantity, line_total: quantity * 100 }) // Will recalc actual price
+          .update({ quantity, line_total: price * quantity })
           .eq('id', itemId);
-        
+
         if (error) throw error;
         return this.get(sessionId) as any;
       },
@@ -367,16 +398,36 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
         return transformOrder(data);
       },
 
+      async getByGatewayRef(gateway: PaymentGateway, ref: string) {
+        // Backed by the partial unique index, so at most one row can match.
+        // `.maybeSingle()` returns data: null (no error) on a miss, so a miss
+        // never throws while a real backend error still surfaces.
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, order_items(*), transactions(*)')
+          .eq('gateway', gateway)
+          .eq('gateway_ref', ref)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (!data) return null;
+        return transformOrder(data);
+      },
+
       async create(data: OrderInput) {
         // Generate order number
         const date = new Date();
         const orderNumber = `TK-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-        
+
+        // Absent gateway/gatewayRef must be stored as SQL NULL (not '') so manual
+        // orders never collide under the partial unique index on gateway_ref.
         const { data: record, error } = await supabase
           .from('orders')
           .insert({
             order_number: orderNumber,
             email: data.email,
+            gateway: data.gateway ?? null,
+            gateway_ref: data.gatewayRef ?? null,
             status: data.status || 'pending',
             payment_status: data.paymentStatus || 'pending',
             fulfillment_status: data.fulfillmentStatus || 'unfulfilled',
@@ -393,8 +444,18 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
           })
           .select()
           .single();
-        
-        if (error) throw error;
+
+        // supabase-js does NOT throw; it returns { data: null, error }. A unique
+        // violation is error.code === '23505'. Classify as a duplicate ONLY when
+        // the violated constraint is the gateway_ref index (message/details name
+        // it); otherwise rethrow so unrelated constraints aren't swallowed.
+        if (error) {
+          const haystack = `${error.message ?? ''} ${(error as { details?: string }).details ?? ''}`;
+          if (error.code === '23505' && haystack.includes('gateway_ref')) {
+            throw new DuplicateGatewayRefError(data.gateway ?? '', data.gatewayRef ?? '');
+          }
+          throw error;
+        }
         
         // Insert order items if provided
         if (data.items?.length) {
@@ -459,6 +520,81 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
         
         if (error) throw error;
         return transformOrder(record);
+      },
+    },
+
+    // Webhook events — exactly-once ledger for gateway deliveries.
+    webhookEvents: {
+      async claim(event: {
+        gateway: PaymentGateway;
+        eventId: string;
+        eventType: string;
+      }) {
+        // Single atomic INSERT ... ON CONFLICT DO NOTHING (ignoreDuplicates).
+        // A returned row means THIS call inserted it (claimed); an empty array
+        // means the row already existed (a prior claim won).
+        const { data, error } = await supabase
+          .from('processed_webhook_events')
+          .upsert(
+            {
+              gateway: event.gateway,
+              event_id: event.eventId,
+              event_type: event.eventType,
+              outcome: 'processed',
+            },
+            { onConflict: 'gateway,event_id', ignoreDuplicates: true }
+          )
+          .select();
+
+        if (error) throw error;
+
+        if (data && data.length === 1) {
+          return { claimed: true };
+        }
+
+        // Already existed — surface the winning row so the caller can inspect it.
+        const existing = await this.get(event.gateway, event.eventId);
+        return { claimed: false, existing: existing ?? undefined };
+      },
+
+      async complete(
+        gateway: PaymentGateway,
+        eventId: string,
+        result: { outcome: 'processed' | 'ignored'; orderId?: string }
+      ) {
+        const { error } = await supabase
+          .from('processed_webhook_events')
+          .update({
+            outcome: result.outcome,
+            order_id: result.orderId ?? null,
+          })
+          .eq('gateway', gateway)
+          .eq('event_id', eventId);
+
+        if (error) throw error;
+      },
+
+      async release(gateway: PaymentGateway, eventId: string) {
+        const { error } = await supabase
+          .from('processed_webhook_events')
+          .delete()
+          .eq('gateway', gateway)
+          .eq('event_id', eventId);
+
+        if (error) throw error;
+      },
+
+      async get(gateway: PaymentGateway, eventId: string) {
+        const { data, error } = await supabase
+          .from('processed_webhook_events')
+          .select('*')
+          .eq('gateway', gateway)
+          .eq('event_id', eventId)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (!data) return null;
+        return transformWebhookEvent(data);
       },
     },
 
@@ -537,7 +673,9 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
     // Setup — create tables based on enabled features
     async setup(features: StoreFeatures): Promise<SetupResult> {
       const createdCollections: string[] = [];
-      let created = false;
+      // This adapter cannot execute DDL over PostgREST, so it creates nothing.
+      // Claiming otherwise is a lie the contract suite now catches (case 8).
+      const created = false;
 
       const tables: { name: string; sql: string; condition?: boolean }[] = [
         {
@@ -648,26 +786,71 @@ export function supabaseAdapter(config: SupabaseAdapterConfig): DatabaseAdapter 
         },
       ];
 
-      // We can't run DDL from REST easily. Instead, log instructions.
+      // This adapter cannot run DDL over the REST API, so it creates NOTHING.
+      // We surface the SQL the operator must run themselves (psql / SQL editor /
+      // migration) rather than lying with created: true (contract test case 8).
+      const requiredSql: string[] = [];
       for (const table of tables) {
         if (table.condition) {
-          try {
-            // Supabase edge function or direct SQL would be needed.
-            // For now we return metadata so a CLI can handle it.
-            createdCollections.push(table.name);
-            created = true;
-          } catch {
-            // Table likely exists
-          }
+          requiredSql.push(table.sql.trim());
         }
       }
 
-      return { created, createdCollections };
+      // Payment-hardening additions (spec 018): idempotency columns/indexes and
+      // the exactly-once webhook ledger. The partial index on gateway_ref lets
+      // manual orders (NULL gateway_ref) coexist without ever conflicting.
+      requiredSql.push(
+        `ALTER TABLE orders ADD COLUMN IF NOT EXISTS gateway text;`,
+        `ALTER TABLE orders ADD COLUMN IF NOT EXISTS gateway_ref text;`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_gateway_ref ON orders (gateway, gateway_ref) WHERE gateway_ref IS NOT NULL;`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_number ON orders (order_number);`,
+        `CREATE TABLE IF NOT EXISTS processed_webhook_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  gateway text NOT NULL,
+  event_id text NOT NULL,
+  event_type text NOT NULL,
+  outcome text NOT NULL DEFAULT 'processed' CHECK (outcome IN ('processed','ignored','failed')),
+  order_id uuid,
+  processed_at timestamptz DEFAULT now()
+);`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_events ON processed_webhook_events (gateway, event_id);`
+      );
+
+      // NOTE: core's SetupResult only declares { created, createdCollections }.
+      // `requiredSql` is an honest extra field the CLI consumes; core's
+      // SetupResult should gain `requiredSql` (tracked as a follow-up).
+      void created;
+      return {
+        created: false,
+        createdCollections,
+        requiredSql,
+      } as SetupResult & { requiredSql: string[] };
     },
   };
 }
 
 // Transform Supabase product to TillKit format
+/**
+ * A `cart_items` row → the contract's `CartItem`.
+ *
+ * `cart.get()` previously returned these rows untransformed, so callers saw
+ * `product_id` / `line_total` where the contract promises `productId` /
+ * `lineTotal`. Every consumer reading `item.productId` silently got `undefined`.
+ */
+function toCartItem(data: any) {
+  return {
+    id: data.id,
+    productId: data.product_id,
+    variantId: data.variant_id ?? undefined,
+    name: data.name,
+    sku: data.sku,
+    price: data.price,
+    quantity: data.quantity,
+    lineTotal: data.line_total ?? data.price * data.quantity,
+    image: data.image ?? undefined,
+  };
+}
+
 function transformProduct(data: any) {
   return {
     ...data,
@@ -717,6 +900,8 @@ function transformOrder(data: any) {
     status: data.status,
     paymentStatus: data.payment_status,
     fulfillmentStatus: data.fulfillment_status,
+    gateway: data.gateway ?? undefined,
+    gatewayRef: data.gateway_ref ?? undefined,
     items: (data.order_items || []).map((item: any) => ({
       id: item.id,
       orderId: item.order_id,
@@ -752,6 +937,19 @@ function transformOrder(data: any) {
     metadata: data.metadata,
     createdAt: new Date(data.created_at),
     updatedAt: new Date(data.updated_at),
+  };
+}
+
+// Transform Supabase processed_webhook_events row to TillKit format
+function transformWebhookEvent(data: any): ProcessedWebhookEvent {
+  return {
+    id: data.id,
+    gateway: data.gateway,
+    eventId: data.event_id,
+    eventType: data.event_type,
+    outcome: data.outcome,
+    orderId: data.order_id ?? undefined,
+    processedAt: new Date(data.processed_at),
   };
 }
 

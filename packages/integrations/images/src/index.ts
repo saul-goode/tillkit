@@ -286,7 +286,7 @@ export function r2Provider(config: R2Config): ImageProvider {
   
   async function uploadToR2(key: string, buffer: Buffer, metadata?: Record<string, string>) {
     // AWS S3 compatible signature
-    const date = new Date().toISOString().replace(/[:\-\.]/g, '').slice(0, 15);
+    const date = new Date().toISOString().replace(/[:.-]/g, '').slice(0, 15);
     const shortDate = date.slice(0, 8);
     
     const credential = `${config.accessKeyId}/${shortDate}/auto/s3/aws4_request`;
@@ -400,7 +400,7 @@ export interface ExternalConfig {
 
 export function externalProvider(): ImageProvider {
   return {
-    async upload(file, filename) {
+    async upload(_file, _filename) {
       throw new Error('External provider cannot upload. Use pre-signed URLs or direct client uploads.');
     },
     

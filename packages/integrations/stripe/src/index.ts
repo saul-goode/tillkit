@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import type { Cart, Order, Transaction } from '@tillkit/core';
+import type { Cart, Transaction } from '@tillkit/core';
 
 export interface StripeConfig {
   provider: 'stripe';

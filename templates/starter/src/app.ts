@@ -6,6 +6,7 @@ import {
   getSessionId,
   setSessionCookie,
   layout,
+  takeFlash,
 } from './app-context.js';
 import type { SearchService } from '@tillkit/integration-search';
 import type { SubscriptionProvider } from '@tillkit/core';
@@ -33,16 +34,70 @@ export function createStarterApp(deps: {
     const products = await database.products.list({ limit: 6 });
 
     const html = layout(
-      'Home',
+      'Open-source e-commerce starter',
       `
-      <h1>Welcome to TillKit!</h1>
-      <p>A server-side e-commerce platform built with Hono, HTMX, and PocketBase.</p>
-      <div class="hero">
-        <a href="/products" class="button-primary">Browse Products</a>
+      <div class="hero" style="text-align: center; padding: 60px 20px;">
+        <h1 style="font-size: 2.5rem; font-weight: 700; margin-bottom: 16px; letter-spacing: -0.02em;">
+          TillKit
+        </h1>
+        <p style="font-size: 1.15rem; color: var(--text-muted); max-width: 560px; margin: 0 auto 32px;">
+          An open-source e-commerce starter kit built with Hono, HTMX, and PocketBase. 
+          Free to use. Easy to deploy.
+        </p>
+        <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          <a href="/products" class="button-primary" style="font-size: 1.05rem; padding: 14px 28px;">
+            🛒 See Live Demo
+          </a>
+          <a href="https://github.com/yourname/tillkit" class="button-primary" style="font-size: 1.05rem; padding: 14px 28px; background: #1a1a1a;">
+            ⭐ View on GitHub
+          </a>
+        </div>
       </div>
-      <h2>Featured Products</h2>
-      <div class="products">
-        ${products.items.map((p: Product) => renderProductCard(p)).join('')}
+
+      <div style="background: var(--bg-muted); padding: 60px 20px; margin: 0 -20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+        <div style="max-width: 800px; margin: 0 auto; text-align: center;">
+          <h2 style="font-size: 1.5rem; margin-bottom: 12px;">Need a custom store?</h2>
+          <p style="color: var(--text-muted); margin-bottom: 24px;">
+            I build production-ready e-commerce sites on top of TillKit. 
+            Custom themes, integrations, deployments — done for you.
+          </p>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; max-width: 600px; margin: 0 auto;">
+            <div style="background: white; padding: 20px; border-radius: var(--radius); text-align: center;">
+              <div style="font-size: 1.3rem; font-weight: 700;">$500</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Basic Setup</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+                Deploy + configure products + Stripe connect
+              </div>
+            </div>
+            <div style="background: white; padding: 20px; border-radius: var(--radius); text-align: center; border: 2px solid var(--primary);">
+              <div style="font-size: 1.3rem; font-weight: 700; color: var(--primary);">$2,000</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Custom Store</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+                Custom theme, integrations, full deployment
+              </div>
+            </div>
+            <div style="background: white; padding: 20px; border-radius: var(--radius); text-align: center;">
+              <div style="font-size: 1.3rem; font-weight: 700;">$300/mo</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Ongoing Care</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+                Hosting, updates, maintenance
+              </div>
+            </div>
+          </div>
+          <a href="mailto:hello@tillkit.dev" style="display: inline-block; margin-top: 24px; color: var(--primary); font-weight: 500;">
+            hello@tillkit.dev →
+          </a>
+        </div>
+      </div>
+
+      <div style="padding: 40px 20px; text-align: center;">
+        <h2 style="font-size: 1.5rem; margin-bottom: 8px;">Featured Products</h2>
+        <p style="color: var(--text-muted); margin-bottom: 24px; font-size: 0.9rem;">
+          This demo store was built with TillKit
+        </p>
+        <div class="products">
+          ${products.items.map((p: Product) => renderProductCard(p)).join('')}
+        </div>
       </div>
     `,
     );
@@ -161,6 +216,9 @@ export function createStarterApp(deps: {
     const sessionId = getSessionId(c);
     setSessionCookie(c, sessionId);
 
+    // Consume any message left by a checkout attempt that was turned back.
+    const flash = takeFlash(c);
+
     let cart: Cart | null = null;
     try {
       cart = await database.cart.get(sessionId);
@@ -177,6 +235,7 @@ export function createStarterApp(deps: {
           <p>Looks like you haven't added anything yet.</p>
           <a href="/products" class="button-primary">Continue Shopping</a>
         `,
+          flash,
         ),
       );
     }
@@ -231,6 +290,7 @@ export function createStarterApp(deps: {
         }
       </div>
     `,
+      flash,
     );
     return c.html(html);
   });

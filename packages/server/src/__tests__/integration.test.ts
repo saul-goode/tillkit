@@ -3,13 +3,14 @@ import { Hono } from 'hono';
 import { createAdminRoutes } from '../routes/admin.js';
 import { createWebhookRoutes, createOrderFromStripeSession } from '../routes/webhooks.js';
 import { createSubscriptionRoutes } from '../routes/subscriptions.js';
-import type { DatabaseAdapter, Order, Cart } from '@tillkit/core';
+import type { DatabaseAdapter, Order } from '@tillkit/core';
 import type { StripeIntegration } from '@tillkit/integration-stripe';
 
 // Mock database adapter
 function createMockDatabase(): DatabaseAdapter {
   const orders: Order[] = [];
   const carts: Record<string, any> = {};
+  const webhookEvents = new Map<string, any>();
   let orderCounter = 1;
   
   return {
@@ -106,6 +107,8 @@ function createMockDatabase(): DatabaseAdapter {
       }),
       get: async (id) => orders.find(o => o.id === id) || null,
       getByNumber: async () => null,
+      getByGatewayRef: async (gateway, ref) =>
+        orders.find(o => o.gateway === gateway && o.gatewayRef === ref) || null,
       create: async (data) => {
         const order: Order = {
           id: crypto.randomUUID(),
@@ -146,6 +149,29 @@ function createMockDatabase(): DatabaseAdapter {
         }
         throw new Error('Order not found');
       },
+    },
+    webhookEvents: {
+      claim: async ({ gateway, eventId, eventType }) => {
+        const k = `${gateway}:${eventId}`;
+        if (webhookEvents.has(k)) return { claimed: false, existing: webhookEvents.get(k) };
+        webhookEvents.set(k, {
+          id: k,
+          gateway,
+          eventId,
+          eventType,
+          outcome: 'processed',
+          processedAt: new Date(),
+        });
+        return { claimed: true };
+      },
+      complete: async (gateway, eventId, result) => {
+        const row = webhookEvents.get(`${gateway}:${eventId}`);
+        if (row) Object.assign(row, result);
+      },
+      release: async (gateway, eventId) => {
+        webhookEvents.delete(`${gateway}:${eventId}`);
+      },
+      get: async (gateway, eventId) => webhookEvents.get(`${gateway}:${eventId}`) ?? null,
     },
     customers: {
       get: async () => null,
@@ -495,7 +521,7 @@ describe('createOrderFromStripeSession', () => {
   
   it('should create order from Stripe session', async () => {
     // Create a cart first
-    const cart = await database.cart.create('test-session');
+    await database.cart.create('test-session');
     await database.cart.addItem('test-session', {
       productId: 'prod_1',
       name: 'Test Product',
@@ -563,7 +589,7 @@ describe('createSubscriptionRoutes', () => {
     app = createSubscriptionRoutes({
       database: db,
       subscriptionProvider: {
-        async createSubscription(options) {
+        async createSubscription(_options) {
           return {
             id: 'sub_test_123',
             status: 'incomplete',
@@ -574,7 +600,7 @@ describe('createSubscriptionRoutes', () => {
         async cancelSubscription(id, immediately) {
           return { id, status: immediately ? 'canceled' : 'active', canceledAt: immediately ? new Date() : undefined };
         },
-        async updateSubscription(id, newPlanId) {
+        async updateSubscription(id, _newPlanId) {
           return { id, status: 'active' };
         },
         async getSubscription(id) {
@@ -596,7 +622,7 @@ describe('createSubscriptionRoutes', () => {
             cancelAtPeriodEnd: false,
           };
         },
-        handleWebhook(payload: string | Buffer, signature?: string) {
+        handleWebhook(_payload: string | Buffer, _signature?: string) {
           return { type: 'invoice.payment_succeeded' };
         },
         async processWebhookEvent(event: any) {

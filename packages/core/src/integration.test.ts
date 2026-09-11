@@ -16,12 +16,12 @@ describe('Database Adapter Pattern', () => {
   const mockDatabase = {
     products: {
       list: async () => ({ items: [], total: 0, page: 1, perPage: 50, hasMore: false }),
-      get: async (id: string) => null,
-      getBySlug: async (slug: string) => null,
+      get: async (_id: string) => null,
+      getBySlug: async (_slug: string) => null,
       create: async (data: any) => data,
-      update: async (id: string, data: any) => data,
-      delete: async (id: string) => {},
-      search: async (query: string) => [],
+      update: async (_id: string, data: any) => data,
+      delete: async (_id: string) => {},
+      search: async (_query: string) => [],
     },
     cart: {
       get: async () => null,

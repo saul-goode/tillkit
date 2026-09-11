@@ -144,7 +144,7 @@ function copyTemplate(src: string, dest: string) {
   }
 }
 
-function generateConfig({ platform, database, styling, webhooks, subscriptions }: { platform: string; database: string; styling: string; webhooks?: boolean; subscriptions?: boolean }) {
+function generateConfig({ database, styling, webhooks, subscriptions }: { platform: string; database: string; styling: string; webhooks?: boolean; subscriptions?: boolean }) {
   const imports = [];
   const adapterImports = [];
   
