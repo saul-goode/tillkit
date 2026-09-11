@@ -676,6 +676,8 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
           type: 'base',
           fields: [...fields, ...TIMESTAMPS],
           indexes: [PRODUCT_INDEXES.slug],
+          listRule: '',
+          viewRule: '',
         });
         createdCollections.push('products');
         created = true;
@@ -696,6 +698,8 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
             ...TIMESTAMPS,
           ],
           indexes: ['CREATE UNIQUE INDEX `idx_collections_slug` ON `collections` (`slug`)'],
+          listRule: '',
+          viewRule: '',
         });
         createdCollections.push('collections');
         created = true;
@@ -718,6 +722,8 @@ export function pocketbaseAdapter(config: PocketbaseAdapterConfig): DatabaseAdap
             text('currency'),
             ...TIMESTAMPS,
           ],
+          listRule: '',
+          viewRule: '',
         });
         createdCollections.push('carts');
         created = true;
